@@ -1,0 +1,7 @@
+{
+  "api_url": "https://api.deepseek.com/chat/completions",
+  "api_key": "",
+  "model": "deepseek-chat",
+  "web_user": "xmz",
+  "web_password": "123"
+}
