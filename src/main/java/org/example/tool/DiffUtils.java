@@ -9,7 +9,9 @@ public final class DiffUtils {
     private static final String CYAN   = "\033[36m";
     private static final String BOLD   = "\033[1m";
     private static final String RESET  = "\033[0m";
-    private static final int MAX_PREVIEW = 40;
+    private static final int MAX_PREVIEW = ToolConstants.DIFF_MAX_PREVIEW_LINES;
+    private static final int CTX = ToolConstants.DIFF_CONTEXT_LINES;
+    private static final int MAX_DIFF_LINES = 5000;
 
     private DiffUtils() {}
 
@@ -23,8 +25,8 @@ public final class DiffUtils {
         int oldStartLine = findLineIndex(oldContent, oldString);
         if (oldStartLine < 0) oldStartLine = 0;
 
-        int ctxBefore = Math.min(3, oldStartLine);
-        int ctxAfter = Math.min(3, oldLines.length - (oldStartLine + oldChunk.length));
+        int ctxBefore = Math.min(CTX, oldStartLine);
+        int ctxAfter = Math.min(CTX, oldLines.length - (oldStartLine + oldChunk.length));
 
         List<Edit> edits = diffEdits(oldChunk, newChunk);
         int oldCount = 0, newCount = 0;
@@ -73,8 +75,16 @@ public final class DiffUtils {
         String[] oldLines = oldContent.split("\n", -1);
         String[] newLines = newContent.split("\n", -1);
 
+        if (oldLines.length > MAX_DIFF_LINES || newLines.length > MAX_DIFF_LINES) {
+            System.out.println(BOLD + "\n--- a/" + displayPath + RESET);
+            System.out.println(BOLD + "+++ b/" + displayPath + RESET);
+            System.out.println(CYAN + "  (文件较大，跳过差异预览: " + oldLines.length + " → " + newLines.length + " 行)" + RESET);
+            System.out.println();
+            return;
+        }
+
         List<Edit> raw = diffEdits(oldLines, newLines);
-        List<Hunk> hunks = groupHunks(raw, 3);
+        List<Hunk> hunks = groupHunks(raw, CTX);
         if (hunks.isEmpty()) {
             System.out.println("  (文件内容无变化)");
             return;
@@ -229,6 +239,9 @@ public final class DiffUtils {
         int lines = 0;
         for (int i = 0; i < charIdx; i++) {
             if (content.charAt(i) == '\n') lines++;
+        }
+        if (content.indexOf(target, charIdx + 1) >= 0) {
+            return lines;
         }
         return lines;
     }

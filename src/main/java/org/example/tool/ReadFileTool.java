@@ -9,14 +9,19 @@ import java.util.List;
 public class ReadFileTool extends Tool {
 
     public ReadFileTool() {
-        super("read_file", "读取指定路径的文本文件内容",
-                new Param("path", "string", "文件路径", true));
+        super("read_file", "读取指定路径的文本文件内容。可用offset和limit读取大文件的指定区间",
+                new Param("path", "string", "文件路径", true),
+                new Param("offset", "integer", "起始字符位置（默认0）", false),
+                new Param("limit", "integer", "最大读取字符数（默认8000）", false));
     }
 
     @Override
     protected String doExecute(JsonObject args) throws Exception {
         String path = args.get("path").getAsString();
-        File file = ToolUtils.resolveFile(path);
+        int offset = args.has("offset") ? args.get("offset").getAsInt() : 0;
+        int limit = args.has("limit") ? args.get("limit").getAsInt() : ToolConstants.OUTPUT_TRUNCATE_CHARS;
+
+        File file = ToolUtils.resolveFileSafe(path);
         if (!file.exists()) {
             boolean isBareName = !path.contains(File.separator) && !path.contains("/");
             if (isBareName) {
@@ -48,9 +53,15 @@ public class ReadFileTool extends Tool {
         }
         byte[] bytes = Files.readAllBytes(Paths.get(file.getAbsolutePath()));
         String content = new String(bytes, StandardCharsets.UTF_8);
-        if (content.length() > 8000) {
-            content = content.substring(0, 8000) + "\n...(内容已截断)";
+        int totalLen = content.length();
+        if (offset >= totalLen) {
+            return "(文件共 " + totalLen + " 字符，offset 超出范围)";
         }
-        return content;
+        int end = Math.min(offset + limit, totalLen);
+        String result = content.substring(offset, end);
+        if (end < totalLen) {
+            result += "\n...(已显示 " + offset + "-" + end + " / " + totalLen + " 字符)";
+        }
+        return result;
     }
 }

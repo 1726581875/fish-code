@@ -27,9 +27,12 @@ body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,sans-seri
 .msg .tools{margin-top:6px;font-size:12px}
 .msg .tools summary{color:#8b949e;cursor:pointer;user-select:none}
 .msg .tools pre{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:8px;margin-top:4px;overflow-x:auto;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;line-height:1.5;max-height:300px;overflow-y:auto}
+.msg .meta{font-size:11px;color:#484f58;margin-top:4px}
 .diff-add{color:#3fb950}
 .diff-del{color:#f85149}
 .diff-hdr{color:#58a6ff;font-weight:600}
+.diff-warn{color:#d29922}
+.diff-info{color:#8b949e}
 .input-area{background:#161b22;border-top:1px solid #30363d;padding:12px 16px;display:flex;gap:8px;flex-shrink:0}
 .input-area textarea{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:8px 12px;font-size:14px;font-family:inherit;resize:none;outline:none;min-height:36px;max-height:120px}
 .input-area textarea:focus{border-color:#58a6ff}
@@ -41,51 +44,87 @@ body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',system-ui,sans-seri
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty-state{text-align:center;color:#484f58;margin-top:80px}
 .empty-state div{font-size:48px;margin-bottom:12px}
-.logout-btn{background:none;border:1px solid #30363d;color:#8b949e;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;margin-left:auto}
-.logout-btn:hover{border-color:#f85149;color:#f85149}
+.header-right{display:flex;gap:8px;margin-left:auto;align-items:center}
+.hdr-btn{background:none;border:1px solid #30363d;color:#8b949e;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+.hdr-btn:hover{border-color:#58a6ff;color:#c9d1d9}
+.hdr-btn.danger:hover{border-color:#f85149;color:#f85149}
+.hdr-btn.primary{background:#238636;border-color:#238636;color:#fff}
+.hdr-btn.primary:hover{background:#2ea043}
 </style>
 </head>
 <body>
 <div class="header">
   <h1>&gt;&lt;(((º&gt; Fish Code</h1>
   <div class="mode-bar" id="modeBar">
-    <button class="mode-btn plan active" onclick="setMode('plan')">Plan 规划</button>
-    <button class="mode-btn auto" onclick="setMode('auto')">Auto 自动</button>
-    <button class="mode-btn confirm" onclick="setMode('confirm')">Confirm 确认</button>
+    <button class="mode-btn plan" onclick="setMode('plan')">Plan</button>
+    <button class="mode-btn auto" onclick="setMode('auto')">Auto</button>
+    <button class="mode-btn confirm" onclick="setMode('confirm')">Confirm</button>
   </div>
-  <button class="logout-btn" onclick="logout()">退出登录</button>
+  <div class="header-right">
+    <button class="hdr-btn primary" onclick="newSession()">+ 新对话</button>
+    <button class="hdr-btn" onclick="toggleSessions()">历史</button>
+    <button class="hdr-btn danger" onclick="logout()">退出</button>
+  </div>
 </div>
-<div class="messages" id="messages">
-  <div class="empty-state"><div>&gt;&lt;(((º&gt;</div>输入消息开始对话</div>
+<div style="display:flex;flex:1;overflow:hidden">
+  <div class="messages" id="messages">
+    <div class="empty-state"><div>&gt;&lt;(((º&gt;</div>输入消息开始对话</div>
+  </div>
+  <div id="sessionPanel" style="width:260px;background:#161b22;border-left:1px solid #30363d;overflow-y:auto;display:none;padding:12px;flex-shrink:0">
+    <div style="font-size:12px;color:#8b949e;margin-bottom:8px">历史会话</div>
+    <div id="sessionList"></div>
+  </div>
 </div>
 <div class="input-area">
-  <textarea id="input" rows="1" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" onkeydown="onKey(event)"></textarea>
+  <textarea id="input" rows="1" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)" onkeydown="onKey(event)" oninput="autoResize(this)"></textarea>
   <button id="sendBtn" onclick="send()">发送</button>
 </div>
 <script>
 var loading=false;
-var currentMode='plan';
+var currentMode='confirm';
 var token=localStorage.getItem('fish_token');
 if(!token){window.location.href='/';}
+
 function authFetch(url,opts){
   opts=opts||{};
   opts.headers=opts.headers||{};
   opts.headers['Authorization']='Bearer '+token;
   return fetch(url,opts);
 }
+
 function logout(){
+  authFetch('/logout',{method:'POST'}).catch(function(){});
   localStorage.removeItem('fish_token');
   window.location.href='/';
 }
+
+function initMode(){
+  authFetch('/mode').then(function(r){return r.json()}).then(function(d){
+    if(d.mode){setModeUI(d.mode);}
+  }).catch(function(){});
+}
+
 function setMode(m){
-  currentMode=m;
-  document.querySelectorAll('.mode-btn').forEach(function(b){b.classList.remove('active')});
-  document.querySelector('.mode-btn.'+m).classList.add('active');
+  setModeUI(m);
   authFetch('/mode',{method:'POST',body:JSON.stringify({mode:m})});
 }
+
+function setModeUI(m){
+  currentMode=m;
+  document.querySelectorAll('.mode-btn').forEach(function(b){b.classList.remove('active')});
+  var btn=document.querySelector('.mode-btn.'+m);
+  if(btn)btn.classList.add('active');
+}
+
 function onKey(e){
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
 }
+
+function autoResize(el){
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+
 function send(){
   if(loading)return;
   var inp=document.getElementById('input');
@@ -96,26 +135,121 @@ function send(){
   addMsg('user',msg);
   loading=true;
   document.getElementById('sendBtn').disabled=true;
-  var loader=addLoader();
-  authFetch('/chat',{method:'POST',body:JSON.stringify({message:msg})})
+  var m=document.getElementById('messages');
+  var loader=addLoader(m);
+  var div=null;
+  var content=null;
+  var toolBuf='';
+  var gotFirstToken=false;
+
+  authFetch('/chat',{method:'POST',body:JSON.stringify({message:msg,stream:true})})
     .then(function(r){
       if(r.status===401){localStorage.removeItem('fish_token');window.location.href='/';return null;}
-      return r.json();
+      if(!r.ok){return r.text().then(function(t){throw new Error('HTTP '+r.status+': '+t);});}
+      var reader=r.body.getReader();
+      var decoder=new TextDecoder();
+      var buf='';
+      function process(){
+        return reader.read().then(function(res){
+          if(res.done){return;}
+          buf+=decoder.decode(res.value,{stream:true});
+          var lines=buf.split('\n');
+          buf=lines.pop();
+          for(var i=0;i<lines.length;i++){
+            var ln=lines[i].trim();
+            if(!ln.startsWith('data: '))continue;
+            var js=ln.substring(6);
+            if(js==='[END]')continue;
+            try{
+              var evt=JSON.parse(js);
+              if(evt.type==='token'){
+                if(!gotFirstToken){
+                  gotFirstToken=true;
+                  loader.remove();
+                  div=createAssistantMsg(m);
+                  content=div.querySelector('.content');
+                }
+                content.innerHTML=renderMarkdown(content.textContent+evt.content);
+                m.scrollTop=m.scrollHeight;
+              }else if(evt.type==='tool_call'){
+                toolBuf+='['+evt.status+'] '+evt.name+'('+evt.args+')\n';
+              }else if(evt.type==='done'){
+                if(!div){loader.remove();div=createAssistantMsg(m);content=div.querySelector('.content');}
+                var meta=document.createElement('div');
+                meta.className='meta';
+                meta.textContent=evt.durationMs+'ms | '+evt.contextTokens+' tokens';
+                div.appendChild(meta);
+                if(evt.toolOutput&&evt.toolOutput.trim()){
+                  addToolDetails(div,evt.toolOutput);
+                }else if(toolBuf){
+                  addToolDetails(div,toolBuf);
+                }
+              }else if(evt.type==='error'){
+                if(!div){loader.remove();div=createAssistantMsg(m);content=div.querySelector('.content');}
+                content.innerHTML+='<br><span style="color:#f85149">'+evt.error+'</span>';
+              }
+            }catch(e){}
+          }
+          return process();
+        });
+      }
+      return process();
     })
-    .then(function(data){
-      if(!data)return;
-      loader.remove();
-      addMsg('assistant',data.reply,data.toolOutput);
+    .then(function(){
       loading=false;
       document.getElementById('sendBtn').disabled=false;
     })
     .catch(function(err){
       loader.remove();
-      addMsg('assistant','网络错误: '+err.message);
+      if(!div){div=createAssistantMsg(m);content=div.querySelector('.content');}
+      content.innerHTML+='<br><span style="color:#f85149">网络错误: '+err.message+'</span>';
       loading=false;
       document.getElementById('sendBtn').disabled=false;
     });
 }
+
+function createAssistantMsg(m){
+  var empty=document.querySelector('.empty-state');
+  if(empty)empty.remove();
+  var div=document.createElement('div');
+  div.className='msg assistant';
+  var roleEl=document.createElement('div');
+  roleEl.className='role';
+  roleEl.textContent='Fish Code';
+  div.appendChild(roleEl);
+  var content=document.createElement('div');
+  content.className='content';
+  content.textContent='';
+  div.appendChild(content);
+  m.appendChild(div);
+  m.scrollTop=m.scrollHeight;
+  return div;
+}
+
+function addLoader(m){
+  var empty=m.querySelector('.empty-state');
+  if(empty)empty.remove();
+  var div=document.createElement('div');
+  div.className='loading';
+  div.innerHTML='<div class="spinner"></div>思考中...';
+  m.appendChild(div);
+  m.scrollTop=m.scrollHeight;
+  return div;
+}
+
+function addToolDetails(div,toolOut){
+  if(!toolOut||!toolOut.trim())return;
+  var tools=document.createElement('details');
+  tools.className='tools';
+  var summary=document.createElement('summary');
+  summary.textContent='工具调用详情';
+  tools.appendChild(summary);
+  var pre=document.createElement('pre');
+  pre.innerHTML=colorizeDiff(toolOut);
+  tools.appendChild(pre);
+  div.appendChild(tools);
+}
+
 function addMsg(role,text,toolOut){
   var empty=document.querySelector('.empty-state');
   if(empty)empty.remove();
@@ -131,30 +265,12 @@ function addMsg(role,text,toolOut){
   content.innerHTML=renderMarkdown(text||'');
   div.appendChild(content);
   if(toolOut&&toolOut.trim()){
-    var tools=document.createElement('details');
-    tools.className='tools';
-    var summary=document.createElement('summary');
-    summary.textContent='工具调用详情';
-    tools.appendChild(summary);
-    var pre=document.createElement('pre');
-    pre.innerHTML=colorizeDiff(toolOut);
-    tools.appendChild(pre);
-    div.appendChild(tools);
+    addToolDetails(div,toolOut);
   }
   m.appendChild(div);
   m.scrollTop=m.scrollHeight;
 }
-function addLoader(){
-  var m=document.getElementById('messages');
-  var empty=document.querySelector('.empty-state');
-  if(empty)empty.remove();
-  var div=document.createElement('div');
-  div.className='loading';
-  div.innerHTML='<div class="spinner"></div>思考中...';
-  m.appendChild(div);
-  m.scrollTop=m.scrollHeight;
-  return div;
-}
+
 function renderMarkdown(text){
   return text
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -163,6 +279,7 @@ function renderMarkdown(text){
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
     .replace(/\n/g,'<br>');
 }
+
 function colorizeDiff(text){
   return text
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -170,8 +287,66 @@ function colorizeDiff(text){
     .replace(/\x1b\[0m/g,'</span>')
     .replace(/\x1b\[31m/g,'<span class="diff-del">')
     .replace(/\x1b\[32m/g,'<span class="diff-add">')
-    .replace(/\x1b\[36m/g,'<span class="diff-hdr">');
+    .replace(/\x1b\[33m/g,'<span class="diff-warn">')
+    .replace(/\x1b\[36m/g,'<span class="diff-hdr">')
+    .replace(/\x1b\[90m/g,'<span class="diff-info">');
 }
+
+function toggleSessions(){
+  var p=document.getElementById('sessionPanel');
+  if(p.style.display==='none'){
+    p.style.display='block';
+    loadSessions();
+  }else{
+    p.style.display='none';
+  }
+}
+
+function loadSessions(){
+  authFetch('/sessions').then(function(r){return r.json()}).then(function(d){
+    var list=document.getElementById('sessionList');
+    list.innerHTML='';
+    if(!d.sessions||!d.sessions.length){
+      list.innerHTML='<div style="color:#484f58;font-size:12px;padding:8px 0">暂无历史会话</div>';
+      return;
+    }
+    d.sessions.forEach(function(s){
+      var item=document.createElement('div');
+      item.style.cssText='padding:8px;border:1px solid #30363d;border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:12px';
+      item.onmouseover=function(){item.style.borderColor='#58a6ff';};
+      item.onmouseout=function(){item.style.borderColor='#30363d';};
+      var title=s.title||'(无标题)';
+      var info=(s.messageCount||0)+'条消息';
+      item.innerHTML='<div style="color:#c9d1d9;margin-bottom:2px">'+title+'</div><div style="color:#484f58">'+info+'</div>';
+      item.onclick=function(){
+        authFetch('/sessions',{method:'POST',body:JSON.stringify({action:'resume',sessionId:s.id})})
+          .then(function(){return r.json()})
+          .catch(function(){});
+        document.getElementById('messages').innerHTML='<div class="empty-state"><div>&gt;&lt;(((º&gt;</div>会话已加载，输入消息继续</div>';
+        p.style.display='none';
+      };
+      var delBtn=document.createElement('span');
+      delBtn.textContent=' ×';
+      delBtn.style.cssText='color:#f85149;float:right;cursor:pointer';
+      delBtn.onclick=function(e){
+        e.stopPropagation();
+        if(!confirm('确定删除此会话?'))return;
+        authFetch('/sessions',{method:'POST',body:JSON.stringify({action:'delete',sessionId:s.id})})
+          .then(function(){loadSessions();});
+      };
+      item.appendChild(delBtn);
+      list.appendChild(item);
+    });
+  });
+}
+
+function newSession(){
+  authFetch('/sessions',{method:'POST',body:JSON.stringify({action:'new'})}).then(function(){
+    document.getElementById('messages').innerHTML='<div class="empty-state"><div>&gt;&lt;(((º&gt;</div>新会话已创建，输入消息开始</div>';
+  });
+}
+
+initMode();
 </script>
 </body>
 </html>

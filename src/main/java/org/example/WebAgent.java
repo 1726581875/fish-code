@@ -6,46 +6,71 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
-import java.security.MessageDigest;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.example.tool.ToolConstants;
 
 public class WebAgent {
 
     private static final Gson GSON = new Gson();
-    private static final int PORT = 8080;
+    private static final int PORT = 10000;
+    private static HttpServer server;
     private static DeepSeekAgent agent;
+    private static SessionManager sessionManager;
     private static String webUser;
     private static String webPassword;
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
-    private static final long TOKEN_EXPIRE = 24 * 60 * 60 * 1000L;
+    private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
+    private static final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "token-cleanup");
+        t.setDaemon(true);
+        return t;
+    });
 
     public static void main(String[] args) {
-        JsonObject config = loadConfig();
-
-        String apiUrl = getConfigString(config, "api_url", "DEEPSEEK_API_URL",
+        String apiUrl = ConfigLoader.getConfigString("api_url", "DEEPSEEK_API_URL",
                 "https://api.deepseek.com/chat/completions");
-        String apiKey = getConfigString(config, "api_key", "DEEPSEEK_API_KEY", "");
-        String model = getConfigString(config, "model", "DEEPSEEK_MODEL", "deepseek-chat");
-        webUser = getConfigString(config, "web_user", "WEB_USER", "admin");
-        webPassword = getConfigString(config, "web_password", "WEB_PASSWORD", "fish2024");
+        String apiKey = ConfigLoader.getConfigString("api_key", "DEEPSEEK_API_KEY", "");
+        String model = ConfigLoader.getConfigString("model", "DEEPSEEK_MODEL", "deepseek-chat");
+        webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "admin");
+        webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "fish2024");
 
         if (apiKey.isEmpty()) {
-            System.out.println("请配置 api_key (config.json 或环境变量 DEEPSEEK_API_KEY)");
+            System.out.println("请配置 api_key (环境变量 DEEPSEEK_API_KEY 或 ~/.fish-code/config.json)");
             return;
         }
 
-        agent = new DeepSeekAgent(apiUrl, apiKey, model);
-        agent.setMode(AgentMode.PLAN);
+        sessionManager = new SessionManager();
+        agent = new DeepSeekAgent(apiUrl, apiKey, model, sessionManager);
+        agent.setMode(AgentMode.CONFIRM);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (server != null) server.stop(2);
+            cleanupExecutor.shutdownNow();
+        }));
+
+        cleanupExecutor.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+            tokens.entrySet().removeIf(e -> now >= e.getValue());
+        }, 1, 1, TimeUnit.HOURS);
 
         try {
-            HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
+            server = HttpServer.create(new InetSocketAddress(PORT), 0);
             server.createContext("/", new IndexHandler());
             server.createContext("/login", new LoginHandler());
+            server.createContext("/logout", new LogoutHandler());
             server.createContext("/chat", new ChatHandler());
             server.createContext("/mode", new ModeHandler());
-            server.setExecutor(Executors.newFixedThreadPool(4));
+            server.createContext("/sessions", new SessionsHandler());
+            server.createContext("/health", new HealthHandler());
+            server.setExecutor(new ThreadPoolExecutor(16, 16, 60L, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(100), r -> {
+                        Thread t = new Thread(r, "http-worker");
+                        t.setDaemon(true);
+                        return t;
+                    }));
             server.start();
 
             System.out.println("\n  Fish Code Web 已启动: \u001B[36mhttp://localhost:" + PORT + "\u001B[0m");
@@ -57,30 +82,14 @@ public class WebAgent {
     }
 
     private static boolean checkAuth(HttpExchange exchange) {
-        String token = null;
-
-        List<String> authHeaders = exchange.getRequestHeaders().get("Authorization");
-        if (authHeaders != null && !authHeaders.isEmpty()) {
-            token = authHeaders.get(0).replace("Bearer ", "");
-        }
-
-        if (token == null) {
-            String query = exchange.getRequestURI().getQuery();
-            if (query != null) {
-                for (String param : query.split("&")) {
-                    String[] kv = param.split("=", 2);
-                    if (kv.length == 2 && "token".equals(kv[0])) {
-                        token = kv[1];
-                        break;
-                    }
-                }
-            }
-        }
-
+        String token = extractToken(exchange);
         if (token != null) {
             Long expire = tokens.get(token);
             if (expire != null && System.currentTimeMillis() < expire) {
                 return true;
+            }
+            if (expire != null) {
+                tokens.remove(token);
             }
         }
         return false;
@@ -89,12 +98,27 @@ public class WebAgent {
     private static String extractToken(HttpExchange exchange) {
         List<String> authHeaders = exchange.getRequestHeaders().get("Authorization");
         if (authHeaders != null && !authHeaders.isEmpty()) {
-            return authHeaders.get(0).replace("Bearer ", "");
+            String headerValue = authHeaders.get(0);
+            if (headerValue.startsWith("Bearer ")) {
+                return headerValue.substring(7);
+            }
+        }
+        List<String> cookieHeaders = exchange.getRequestHeaders().get("Cookie");
+        if (cookieHeaders != null) {
+            for (String header : cookieHeaders) {
+                for (String part : header.split(";")) {
+                    String[] kv = part.trim().split("=", 2);
+                    if (kv.length == 2 && "fish_token".equals(kv[0].trim())) {
+                        return kv[1].trim();
+                    }
+                }
+            }
         }
         return null;
     }
 
     private static void sendJson(HttpExchange exchange, JsonObject json, int code) throws IOException {
+        addCorsHeaders(exchange);
         byte[] resp = json.toString().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.sendResponseHeaders(code, resp.length);
@@ -102,11 +126,28 @@ public class WebAgent {
         exchange.close();
     }
 
+    private static void addCorsHeaders(HttpExchange exchange) {
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie");
+    }
+
+    private static void handleOptions(HttpExchange exchange) throws IOException {
+        addCorsHeaders(exchange);
+        exchange.sendResponseHeaders(204, -1);
+        exchange.close();
+    }
+
     static class IndexHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
             if (!checkAuth(exchange)) {
                 byte[] html = readHtml("login.html");
+                addCorsHeaders(exchange);
                 exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
                 exchange.sendResponseHeaders(200, html.length);
                 exchange.getResponseBody().write(html);
@@ -114,6 +155,7 @@ public class WebAgent {
                 return;
             }
             byte[] html = readHtml("index.html");
+            addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             exchange.sendResponseHeaders(200, html.length);
             exchange.getResponseBody().write(html);
@@ -121,28 +163,77 @@ public class WebAgent {
         }
     }
 
+    static class HealthHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "ok");
+            sendJson(exchange, result, 200);
+        }
+    }
+
     static class LoginHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
             if (!"POST".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 exchange.close();
                 return;
             }
+
+            String remoteAddr = exchange.getRemoteAddress().getAddress().getHostAddress();
+            AtomicInteger attempts = loginAttempts.computeIfAbsent(remoteAddr, k -> new AtomicInteger(0));
+            if (attempts.get() >= 10) {
+                sendJson(exchange, GSON.fromJson("{\"success\":false,\"error\":\"登录尝试过多，请稍后再试\"}", JsonObject.class), 429);
+                return;
+            }
+
             String body = readBody(exchange);
             JsonObject req = GSON.fromJson(body, JsonObject.class);
-            String user = req.get("username").getAsString();
-            String pass = req.get("password").getAsString();
+            String user = req.has("username") ? req.get("username").getAsString() : "";
+            String pass = req.has("password") ? req.get("password").getAsString() : "";
 
             JsonObject result = new JsonObject();
             if (webUser.equals(user) && webPassword.equals(pass)) {
+                attempts.set(0);
                 String token = UUID.randomUUID().toString();
-                tokens.put(token, System.currentTimeMillis() + TOKEN_EXPIRE);
+                long expireMs = (long) ToolConstants.TOKEN_EXPIRE_HOURS * 60 * 60 * 1000;
+                tokens.put(token, System.currentTimeMillis() + expireMs);
+                addCorsHeaders(exchange);
+                exchange.getResponseHeaders().add("Set-Cookie",
+                    "fish_token=" + token + "; Path=/; HttpOnly");
                 result.addProperty("success", true);
                 result.addProperty("token", token);
             } else {
+                attempts.incrementAndGet();
                 result.addProperty("success", false);
             }
+            sendJson(exchange, result, 200);
+        }
+    }
+
+    static class LogoutHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            String token = extractToken(exchange);
+            if (token != null) {
+                tokens.remove(token);
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("success", true);
             sendJson(exchange, result, 200);
         }
     }
@@ -150,6 +241,10 @@ public class WebAgent {
     static class ChatHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
             if (!checkAuth(exchange)) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
                 return;
@@ -161,26 +256,124 @@ public class WebAgent {
             }
             String body = readBody(exchange);
             JsonObject req = GSON.fromJson(body, JsonObject.class);
-            String message = req.get("message").getAsString();
+            String message = req.has("message") ? req.get("message").getAsString() : "";
+            boolean stream = req.has("stream") && req.get("stream").getAsBoolean();
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            PrintStream capture = new PrintStream(baos, true, "UTF-8");
-            PrintStream original = System.out;
-            System.setOut(capture);
-
-            JsonObject result = new JsonObject();
-            try {
-                String reply = agent.chat(message);
-                result.addProperty("reply", reply != null ? reply : "");
-            } catch (Exception e) {
-                result.addProperty("reply", "错误: " + e.getMessage());
-            } finally {
-                System.setOut(original);
+            if (message.isEmpty()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"消息不能为空\"}", JsonObject.class), 400);
+                return;
+            }
+            if (message.length() > 50000) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"消息过长，上限50000字符\"}", JsonObject.class), 400);
+                return;
             }
 
-            String toolOutput = baos.toString("UTF-8");
-            result.addProperty("toolOutput", toolOutput);
+            if (stream) {
+                handleStream(exchange, message);
+            } else {
+                handleSync(exchange, message);
+            }
+        }
+
+        private void handleStream(HttpExchange exchange, String message) throws IOException {
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+            exchange.getResponseHeaders().set("Connection", "keep-alive");
+            exchange.sendResponseHeaders(200, 0);
+
+            OutputStream os = exchange.getResponseBody();
+
+            try {
+                StreamCallback sseCallback = new StreamCallback() {
+                    @Override
+                    public void onToken(String token) {
+                        try {
+                            JsonObject evt = new JsonObject();
+                            evt.addProperty("type", "token");
+                            evt.addProperty("content", token);
+                            String data = "data: " + GSON.toJson(evt) + "\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+
+                    @Override
+                    public void onThinking(String text) {}
+
+                    @Override
+                    public void onToolCall(String fnName, String fnArgs, String status) {
+                        try {
+                            JsonObject evt = new JsonObject();
+                            evt.addProperty("type", "tool_call");
+                            evt.addProperty("name", fnName);
+                            evt.addProperty("args", fnArgs);
+                            evt.addProperty("status", status);
+                            String data = "data: " + GSON.toJson(evt) + "\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+
+                    @Override
+                    public void onComplete(ChatResult result) {
+                        try {
+                            JsonObject doneEvent = new JsonObject();
+                            doneEvent.addProperty("type", "done");
+                            doneEvent.addProperty("reply", result.getReply());
+                            doneEvent.addProperty("durationMs", result.getDurationMs());
+                            doneEvent.addProperty("contextTokens", result.getContextTokens());
+                            doneEvent.addProperty("mode", agent.getMode().label());
+                            doneEvent.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+                            String data = "data: " + GSON.toJson(doneEvent) + "\n[END]\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+
+                    @Override
+                    public void onError(String error) {
+                        try {
+                            JsonObject errorEvent = new JsonObject();
+                            errorEvent.addProperty("type", "error");
+                            errorEvent.addProperty("error", error);
+                            String data = "data: " + GSON.toJson(errorEvent) + "\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+                };
+                agent.chatStream(message, sseCallback);
+            } catch (Exception e) {
+                JsonObject errorEvent = new JsonObject();
+                errorEvent.addProperty("type", "error");
+                errorEvent.addProperty("error", e.getMessage());
+                String data = "data: " + GSON.toJson(errorEvent) + "\n\n";
+                try {
+                    os.write(data.getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                } catch (IOException ignored) {}
+            } finally {
+                try { os.close(); } catch (IOException ignored) {}
+            }
+        }
+
+        private void handleSync(HttpExchange exchange, String message) throws IOException {
+            JsonObject result = new JsonObject();
+            try {
+                ChatResult chatResult = agent.chat(message);
+                result.addProperty("reply", chatResult.getReply() != null ? chatResult.getReply() : "");
+                result.addProperty("durationMs", chatResult.getDurationMs());
+                result.addProperty("contextTokens", chatResult.getContextTokens());
+            } catch (Exception e) {
+                result.addProperty("reply", "错误: " + e.getMessage());
+                result.addProperty("durationMs", 0);
+                result.addProperty("contextTokens", 0);
+            }
+
+            result.addProperty("toolOutput", "");
             result.addProperty("mode", agent.getMode().label());
+            result.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
             sendJson(exchange, result, 200);
         }
     }
@@ -188,6 +381,10 @@ public class WebAgent {
     static class ModeHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
             if (!checkAuth(exchange)) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
                 return;
@@ -200,7 +397,7 @@ public class WebAgent {
             } else if ("POST".equals(method)) {
                 String body = readBody(exchange);
                 JsonObject req = GSON.fromJson(body, JsonObject.class);
-                String modeName = req.get("mode").getAsString();
+                String modeName = req.has("mode") ? req.get("mode").getAsString() : "";
                 switch (modeName) {
                     case "plan":    agent.setMode(AgentMode.PLAN);    break;
                     case "auto":    agent.setMode(AgentMode.AUTO);    break;
@@ -211,7 +408,75 @@ public class WebAgent {
                 result.addProperty("mode", agent.getMode().label());
                 sendJson(exchange, result, 200);
             }
-            exchange.close();
+        }
+    }
+
+    static class SessionsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            String method = exchange.getRequestMethod();
+            if ("GET".equals(method)) {
+                JsonArray sessions = new JsonArray();
+                for (JsonObject s : sessionManager.listSessions()) {
+                    sessions.add(s);
+                }
+                JsonObject result = new JsonObject();
+                result.add("sessions", sessions);
+                result.addProperty("currentSessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+                sendJson(exchange, result, 200);
+            } else if ("POST".equals(method)) {
+                String body = readBody(exchange);
+                JsonObject req = GSON.fromJson(body, JsonObject.class);
+                String action = req.has("action") ? req.get("action").getAsString() : "";
+
+                if ("new".equals(action)) {
+                    agent.newConversation();
+                    JsonObject result = new JsonObject();
+                    result.addProperty("success", true);
+                    result.addProperty("message", "已创建新会话");
+                    sendJson(exchange, result, 200);
+                } else if ("resume".equals(action)) {
+                    String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                    if (agent.loadConversation(sessionId)) {
+                        JsonObject result = new JsonObject();
+                        result.addProperty("success", true);
+                        result.addProperty("message", "已恢复会话 " + sessionId);
+                        sendJson(exchange, result, 200);
+                    } else {
+                        sendJson(exchange, GSON.fromJson("{\"error\":\"未找到会话\"}", JsonObject.class), 404);
+                    }
+                } else if ("clear".equals(action)) {
+                    agent.clearConversation();
+                    JsonObject result = new JsonObject();
+                    result.addProperty("success", true);
+                    result.addProperty("message", "已清空当前会话上下文");
+                    sendJson(exchange, result, 200);
+                } else if ("delete".equals(action)) {
+                    String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                    if (sessionId.isEmpty()) {
+                        sendJson(exchange, GSON.fromJson("{\"error\":\"缺少sessionId\"}", JsonObject.class), 400);
+                        return;
+                    }
+                    sessionManager.deleteSession(sessionId);
+                    if (sessionId.equals(agent.getCurrentSessionId())) {
+                        agent.newConversation();
+                    }
+                    JsonObject result = new JsonObject();
+                    result.addProperty("success", true);
+                    result.addProperty("message", "已删除会话 " + sessionId);
+                    sendJson(exchange, result, 200);
+                } else {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"未知操作\"}", JsonObject.class), 400);
+                }
+            }
         }
     }
 
@@ -223,25 +488,6 @@ public class WebAgent {
             while ((line = br.readLine()) != null) sb.append(line);
             return sb.toString();
         }
-    }
-
-    private static JsonObject loadConfig() {
-        try (InputStream in = WebAgent.class.getResourceAsStream("/config.json")) {
-            if (in != null) {
-                byte[] bytes = new byte[in.available()];
-                in.read(bytes);
-                String s = new String(bytes, StandardCharsets.UTF_8);
-                return GSON.fromJson(s, JsonObject.class);
-            }
-        } catch (IOException ignored) {}
-        return new JsonObject();
-    }
-
-    private static String getConfigString(JsonObject config, String key, String envKey, String def) {
-        if (config.has(key) && !config.get(key).isJsonNull()) return config.get(key).getAsString();
-        String v = System.getenv(envKey);
-        if (v != null && !v.trim().isEmpty()) return v;
-        return def;
     }
 
     private static byte[] readHtml(String name) throws IOException {

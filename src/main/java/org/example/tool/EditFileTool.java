@@ -20,26 +20,28 @@ public class EditFileTool extends Tool {
         String oldString = args.get("oldString").getAsString();
         String newString = args.get("newString").getAsString();
 
-        File file = ToolUtils.resolveFile(path);
+        File file = ToolUtils.resolveFileSafe(path);
         if (!file.exists()) {
-            return "文件不存在: " + file.getAbsolutePath();
+            return "文件不存在: " + file.getAbsolutePath() + "\n提示: 使用 read_file 检查文件是否存在并确认路径正确";
         }
         String oldContent = new String(Files.readAllBytes(Paths.get(file.getAbsolutePath())), StandardCharsets.UTF_8);
         if (!oldContent.contains(oldString)) {
-            return "文件中未找到要替换的文本";
+            String preview = oldString.length() > 80 ? oldString.substring(0, 80) + "..." : oldString;
+            return "文件中未找到要替换的文本\n文件: " + file.getAbsolutePath() + "\n查找内容: " + preview.replace("\n", "\\n") + "\n提示: oldString 必须与文件中的内容完全匹配（包括空格和换行）";
         }
-        int count = 0;
-        int idx = 0;
-        while ((idx = oldContent.indexOf(oldString, idx)) != -1) {
-            count++;
-            idx += oldString.length();
+        int idx = oldContent.indexOf(oldString);
+        int secondIdx = oldContent.indexOf(oldString, idx + oldString.length());
+        if (secondIdx != -1) {
+            return "找到多处匹配，请提供更完整的上下文以精确定位";
         }
-        if (count > 1) {
-            return "找到 " + count + " 处匹配，请提供更完整的上下文以精确定位";
-        }
-        String newContent = oldContent.replace(oldString, newString);
+        String newContent = oldContent.replaceFirst(
+                java.util.regex.Pattern.quote(oldString),
+                java.util.regex.Matcher.quoteReplacement(newString));
         DiffUtils.printEditDiff(file.getAbsolutePath(), oldContent, newContent, oldString, newString);
-        Files.write(Paths.get(file.getAbsolutePath()), newContent.getBytes(StandardCharsets.UTF_8));
-        return "文件已修改: " + file.getAbsolutePath();
+        Path filePath = Paths.get(file.getAbsolutePath());
+        Path bakPath = Paths.get(file.getAbsolutePath() + ".bak");
+        Files.copy(filePath, bakPath, StandardCopyOption.REPLACE_EXISTING);
+        Files.write(filePath, newContent.getBytes(StandardCharsets.UTF_8));
+        return "文件已修改: " + file.getAbsolutePath() + " (备份: " + bakPath.getFileName() + ")";
     }
 }

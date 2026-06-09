@@ -18,7 +18,7 @@ public class WriteFileTool extends Tool {
         String path = args.get("path").getAsString();
         String newContent = args.get("content").getAsString();
 
-        File file = ToolUtils.resolveFile(path);
+        File file = ToolUtils.resolveFileSafe(path);
         File parent = file.getParentFile();
         if (parent != null && !parent.exists()) {
             parent.mkdirs();
