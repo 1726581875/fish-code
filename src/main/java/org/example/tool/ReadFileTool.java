@@ -27,7 +27,10 @@ public class ReadFileTool extends Tool {
             if (isBareName) {
                 List<String> matches = ToolUtils.searchFiles(path, false);
                 if (matches.size() == 1) {
-                    file = new File(matches.get(0));
+                    File resolved = ToolUtils.resolveFileSafe(matches.get(0));
+                    if (resolved.exists()) {
+                        file = resolved;
+                    }
                 } else if (matches.size() > 1) {
                     StringBuilder sb = new StringBuilder("找到多个匹配文件:\n");
                     for (String m : matches) {
@@ -42,26 +45,58 @@ public class ReadFileTool extends Tool {
             }
         }
         if (file.isDirectory()) {
-            StringBuilder sb = new StringBuilder();
             String[] children = file.list();
-            if (children != null) {
-                for (String child : children) {
-                    sb.append(child).append("\n");
-                }
+            if (children == null) {
+                return "";
+            }
+            java.util.Arrays.sort(children);
+            StringBuilder sb = new StringBuilder();
+            for (String child : children) {
+                sb.append(child).append("\n");
             }
             return sb.toString();
         }
-        byte[] bytes = Files.readAllBytes(Paths.get(file.getAbsolutePath()));
-        String content = new String(bytes, StandardCharsets.UTF_8);
-        int totalLen = content.length();
+
+        Path filePath = Paths.get(file.getAbsolutePath());
+        long totalLen = Files.lines(filePath, StandardCharsets.UTF_8)
+                .mapToLong(String::length).sum();
         if (offset >= totalLen) {
             return "(文件共 " + totalLen + " 字符，offset 超出范围)";
         }
-        int end = Math.min(offset + limit, totalLen);
-        String result = content.substring(offset, end);
-        if (end < totalLen) {
-            result += "\n...(已显示 " + offset + "-" + end + " / " + totalLen + " 字符)";
+
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            StringBuilder sb = new StringBuilder();
+            long skipped = 0;
+            int charsRead = 0;
+            String line;
+            boolean started = false;
+
+            while ((line = reader.readLine()) != null && charsRead < limit) {
+                int lineLen = line.length() + 1; // +1 for newline
+
+                if (!started) {
+                    if (skipped + lineLen > offset) {
+                        int startInLine = offset - (int) skipped;
+                        String remaining = line.substring(startInLine);
+                        sb.append(remaining);
+                        charsRead += remaining.length();
+                        started = true;
+                        continue;
+                    }
+                    skipped += lineLen;
+                    continue;
+                }
+
+                sb.append(line).append("\n");
+                charsRead += line.length() + 1;
+            }
+
+            String result = sb.toString();
+            if (charsRead < totalLen) {
+                result += "\n...(已显示 offset " + offset + " 起的 "
+                        + charsRead + " / " + totalLen + " 字符)";
+            }
+            return result;
         }
-        return result;
     }
 }

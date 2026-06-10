@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude History - Fish Code</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f6f8fa;color:#24292f;font-family:'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+.header{background:#fff;border-bottom:1px solid #d0d7de;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.header h1{font-size:16px;color:#6639ba;white-space:nowrap}
+.header-left{display:flex;gap:8px;align-items:center}
+.search-box{background:#fff;border:1px solid #d0d7de;border-radius:6px;color:#24292f;padding:6px 12px;font-size:13px;width:300px;outline:none}
+.search-box:focus{border-color:#6639ba}
+.hdr-btn{background:none;border:1px solid #d0d7de;color:#57606a;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
+.hdr-btn:hover{border-color:#6639ba;color:#24292f}
+.hdr-btn.primary{background:#2da44e;border-color:#2da44e;color:#fff}
+.hdr-btn.primary:hover{background:#1a7f37}
+.main{display:flex;flex:1;overflow:hidden}
+.panel{border-right:1px solid #d0d7de;overflow-y:auto;flex-shrink:0;background:#fff}
+.panel-header{padding:10px 12px;font-size:12px;color:#57606a;border-bottom:1px solid #d0d7de;position:sticky;top:0;background:#f6f8fa;z-index:1}
+.panel-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #eee;transition:background .15s}
+.panel-item:hover{background:#f3f4f6}
+.panel-item.active{background:#ddf4ff;border-left:3px solid #0969da}
+.panel-item .title{font-size:13px;color:#24292f;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel-item .meta{font-size:11px;color:#57606a}
+.panel-item .count{font-size:11px;color:#0969da}
+.project-panel{width:280px}
+.session-panel{width:300px}
+.detail-panel{flex:1;padding:16px;overflow-y:auto;background:#f6f8fa}
+.empty-state{text-align:center;color:#57606a;margin-top:60px}
+.empty-state .icon{font-size:48px;margin-bottom:12px}
+.empty-state .text{font-size:14px}
+.message{margin-bottom:16px;max-width:90%}
+.message .role{font-size:11px;text-transform:uppercase;margin-bottom:4px;font-weight:600}
+.message.user .role{color:#1a7f37}
+.message.assistant .role{color:#0969da}
+.message.system .role{color:#6639ba}
+.message .content{background:#fff;border:1px solid #d0d7de;border-radius:8px;padding:12px;line-height:1.6;font-size:14px;white-space:pre-wrap;word-break:break-word;color:#24292f}
+.message.user .content{background:#dafbe1;border-color:#4ac26b}
+.message.system .content{background:#fbefff;border-color:#d8b9ff}
+.tool-call{margin-top:8px;background:#fff;border:1px solid #d0d7de;border-radius:6px;overflow:hidden}
+.tool-call-header{padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;color:#57606a}
+.tool-call-header:hover{background:#f6f8fa}
+.tool-call-header .arrow{transition:transform .15s}
+.tool-call-header .arrow.open{transform:rotate(90deg)}
+.tool-call-header .name{color:#953800;font-weight:600}
+.tool-call-body{display:none;padding:8px 12px;border-top:1px solid #d0d7de;background:#f6f8fa}
+.tool-call-body.open{display:block}
+.tool-call-body pre{font-family:'Cascadia Code','Consolas',monospace;font-size:12px;line-height:1.5;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#24292f}
+.tool-result{margin-top:4px;background:#f6f8fa;border:1px solid #d0d7de;border-radius:4px;padding:8px;font-family:'Cascadia Code','Consolas',monospace;font-size:11px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:#57606a}
+.thinking{margin-top:8px;background:#f8f0ff;border:1px solid #d8b9ff;border-radius:6px;padding:10px;font-size:12px;color:#57606a;font-style:italic}
+.thinking-header{cursor:pointer;color:#6639ba;font-weight:600;font-size:11px;margin-bottom:4px}
+.timestamp{font-size:11px;color:#57606a;margin-top:4px}
+.loading{text-align:center;color:#57606a;padding:20px}
+.no-path{text-align:center;padding:40px}
+.no-path input{background:#fff;border:1px solid #d0d7de;border-radius:6px;color:#24292f;padding:8px 12px;font-size:14px;width:400px;margin:12px 0}
+.no-path input:focus{border-color:#6639ba;outline:none}
+.badge{background:#ddf4ff;color:#0969da;padding:1px 6px;border-radius:10px;font-size:10px;margin-left:6px}
+.token-info{font-size:11px;color:#57606a;margin-top:6px}
+.model-tag{background:#ddf4ff;color:#0969da;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:6px}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-left">
+    <h1>Claude History</h1>
+    <input class="search-box" id="searchInput" placeholder="搜索对话内容..." onkeydown="if(event.key==='Enter')doSearch()">
+    <button class="hdr-btn" onclick="doSearch()">搜索</button>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+    <span id="dirInfo" style="font-size:11px;color:#57606a"></span>
+    <a class="hdr-btn" href="/">返回 Fish Code</a>
+  </div>
+</div>
+<div class="main">
+  <div class="panel project-panel">
+    <div class="panel-header">项目列表</div>
+    <div id="projectList"><div class="loading">加载中...</div></div>
+  </div>
+  <div class="panel session-panel">
+    <div class="panel-header">会话列表 <span id="sessionCount"></span></div>
+    <div id="sessionList"><div class="empty-state"><div class="text">选择一个项目</div></div></div>
+  </div>
+  <div class="detail-panel" id="detailPanel">
+    <div class="empty-state">
+      <div class="icon">&#x1f4ac;</div>
+      <div class="text">选择一个会话查看详情</div>
+    </div>
+  </div>
+</div>
+
+<script>
+var projects=[],currentProject=null,currentSession=null,allSessions=[];
+
+fetch('/claude-api/check').then(r=>r.json()).then(d=>{
+  document.getElementById('dirInfo').textContent=d.path;
+  if(!d.exists){
+    document.getElementById('projectList').innerHTML='<div class="empty-state"><div class="text">未找到 ~/.claude 目录<br><small>请在 config.json 中配置 claude_dir</small></div></div>';
+    return;
+  }
+  loadProjects();
+});
+
+function loadProjects(){
+  fetch('/claude-api/projects').then(r=>r.json()).then(d=>{
+    projects=d.projects||[];
+    renderProjects();
+  });
+}
+
+function renderProjects(){
+  var el=document.getElementById('projectList');
+  if(!projects.length){el.innerHTML='<div class="empty-state"><div class="text">没有找到项目</div></div>';return;}
+  el.innerHTML=projects.map(function(p){
+    return '<div class="panel-item" onclick="selectProject(\''+p.hash+'\')" id="proj-'+p.hash+'">'+
+      '<div class="title" title="'+esc(p.path)+'">'+esc(shortPath(p.path))+'</div>'+
+      '<div class="meta">'+p.sessionCount+' 个会话</div>'+
+    '</div>';
+  }).join('');
+}
+
+function selectProject(hash){
+  currentProject=hash;
+  document.querySelectorAll('.project-panel .panel-item').forEach(function(el){el.classList.remove('active');});
+  var el=document.getElementById('proj-'+hash);
+  if(el) el.classList.add('active');
+  document.getElementById('sessionList').innerHTML='<div class="loading">加载中...</div>';
+  fetch('/claude-api/sessions?project='+hash).then(r=>r.json()).then(d=>{
+    allSessions=d.sessions||[];
+    renderSessions();
+  });
+}
+
+function renderSessions(){
+  var el=document.getElementById('sessionList');
+  document.getElementById('sessionCount').textContent='('+allSessions.length+')';
+  if(!allSessions.length){el.innerHTML='<div class="empty-state"><div class="text">没有会话</div></div>';return;}
+  el.innerHTML=allSessions.map(function(s){
+    var t=s.timestamp?formatTime(s.timestamp):'';
+    var summary=s.summary?esc(truncate(s.summary,50)):'(空会话)';
+    return '<div class="panel-item" onclick="selectSession(\''+s.id+'\')" id="sess-'+s.id+'">'+
+      '<div class="title">'+esc(s.id)+'</div>'+
+      '<div class="meta">'+t+'<span class="count"> '+s.messageCount+' 条消息</span></div>'+
+      '<div class="meta" style="color:#57606a;margin-top:2px">'+summary+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function selectSession(id){
+  currentSession=id;
+  document.querySelectorAll('.session-panel .panel-item').forEach(function(el){el.classList.remove('active');});
+  var el=document.getElementById('sess-'+id);
+  if(el) el.classList.add('active');
+  document.getElementById('detailPanel').innerHTML='<div class="loading">加载中...</div>';
+  fetch('/claude-api/session?project='+currentProject+'&id='+id).then(r=>r.json()).then(d=>{
+    renderDetail(d);
+  });
+}
+
+function renderDetail(session){
+  var el=document.getElementById('detailPanel');
+  if(!session.messages||!session.messages.length){
+    el.innerHTML='<div class="empty-state"><div class="icon">&#x1f4ad;</div><div class="text">会话为空</div></div>';
+    return;
+  }
+  var html='<div style="margin-bottom:16px;font-size:12px;color:#57606a">'+
+    '项目: <span style="color:#0969da">'+esc(session.cwd||'')+'</span>'+
+    ' | 会话: <span style="color:#6639ba">'+esc(session.id)+'</span>'+
+    ' | 开始: '+formatTime(session.timestamp)+
+  '</div>';
+  session.messages.forEach(function(msg){
+    html+=renderMessage(msg);
+  });
+  el.innerHTML=html;
+}
+
+function renderMessage(msg){
+  var role=msg.role||'';
+  var ts=msg.timestamp?'<div class="timestamp">'+formatTime(msg.timestamp)+'</div>':'';
+  var model=msg.model?'<span class="model-tag">'+esc(msg.model)+'</span>':'';
+  var usage='';
+  if(msg.usage){
+    var u=msg.usage;
+    usage='<div class="token-info">Tokens: '+(u.input_tokens||0)+' in / '+(u.output_tokens||0)+' out</div>';
+  }
+
+  if(role==='system'){
+    var content=typeof msg.content==='string'?msg.content:JSON.stringify(msg.content);
+    return '<div class="message system"><div class="role">SYSTEM '+model+'</div><div class="content">'+esc(content)+'</div>'+ts+'</div>';
+  }
+
+  var contentHtml='';
+  if(typeof msg.content==='string'){
+    contentHtml='<div class="content">'+esc(msg.content)+'</div>';
+  } else if(Array.isArray(msg.content)){
+    var blocks='';
+    msg.content.forEach(function(b){
+      if(b.type==='text'){
+        blocks+='<div class="content">'+esc(b.text||'')+'</div>';
+      } else if(b.type==='tool_use'){
+        var inputStr=JSON.stringify(b.input||{},null,2);
+        var toolId='tool-'+Math.random().toString(36).substr(2,8);
+        blocks+='<div class="tool-call">'+
+          '<div class="tool-call-header" onclick="toggleTool(\''+toolId+'\')">'+
+            '<span class="arrow" id="arrow-'+toolId+'">&#x25b6;</span>'+
+            '<span class="name">'+esc(b.name||'')+'</span>'+
+            '<span class="badge">tool_use</span>'+
+          '</div>'+
+          '<div class="tool-call-body" id="body-'+toolId+'"><pre>'+esc(inputStr)+'</pre></div>'+
+        '</div>';
+      } else if(b.type==='tool_result'){
+        var resultId='result-'+Math.random().toString(36).substr(2,8);
+        blocks+='<div class="tool-call">'+
+          '<div class="tool-call-header" onclick="toggleTool(\''+resultId+'\')">'+
+            '<span class="arrow" id="arrow-'+resultId+'">&#x25b6;</span>'+
+            '<span class="name">Tool Result</span>'+
+            '<span class="badge">tool_result</span>'+
+          '</div>'+
+          '<div class="tool-call-body" id="body-'+resultId+'"><div class="tool-result">'+esc(b.content||'')+'</div></div>'+
+        '</div>';
+      } else if(b.type==='thinking'){
+        var thinkId='think-'+Math.random().toString(36).substr(2,8);
+        blocks+='<div class="thinking">'+
+          '<div class="thinking-header" onclick="toggleTool(\''+thinkId+'\')">'+
+            '<span class="arrow" id="arrow-'+thinkId+'">&#x25b6;</span> Thinking'+
+          '</div>'+
+          '<div class="tool-call-body" id="body-'+thinkId+'"><pre style="color:#57606a">'+esc(b.thinking||'')+'</pre></div>'+
+        '</div>';
+      }
+    });
+    contentHtml=blocks;
+  } else {
+    contentHtml='<div class="content">'+esc(JSON.stringify(msg.content))+'</div>';
+  }
+
+  return '<div class="message '+role+'"><div class="role">'+role.toUpperCase()+' '+model+'</div>'+contentHtml+usage+ts+'</div>';
+}
+
+function toggleTool(id){
+  var body=document.getElementById('body-'+id);
+  var arrow=document.getElementById('arrow-'+id);
+  if(!body)return;
+  if(body.classList.contains('open')){
+    body.classList.remove('open');
+    if(arrow)arrow.classList.remove('open');
+  } else {
+    body.classList.add('open');
+    if(arrow)arrow.classList.add('open');
+  }
+}
+
+function doSearch(){
+  var q=document.getElementById('searchInput').value.trim();
+  if(!q)return;
+  document.getElementById('sessionList').innerHTML='<div class="loading">搜索中...</div>';
+  document.getElementById('detailPanel').innerHTML='<div class="loading">搜索中...</div>';
+  fetch('/claude-api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(d=>{
+    renderSearchResults(d.results||[],q);
+  });
+}
+
+function renderSearchResults(results,keyword){
+  var el=document.getElementById('sessionList');
+  document.getElementById('sessionCount').textContent='(搜索结果: '+results.length+')';
+  if(!results.length){el.innerHTML='<div class="empty-state"><div class="text">没有找到匹配内容</div></div>';return;}
+  el.innerHTML=results.map(function(r,i){
+    var snippet=esc(r.snippet||'');
+    return '<div class="panel-item" onclick="selectSearchResult(\''+r.projectHash+'\',\''+r.sessionId+'\')">'+
+      '<div class="title">'+esc(r.type)+' - '+esc(r.sessionId)+'</div>'+
+      '<div class="meta">'+formatTime(r.timestamp)+'</div>'+
+      '<div class="meta" style="color:#953800;margin-top:2px">'+snippet+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function selectSearchResult(projectHash,sessionId){
+  currentProject=projectHash;
+  selectSession(sessionId);
+}
+
+function shortPath(p){
+  if(!p)return'';
+  var parts=p.split('/');
+  if(parts.length<=3)return p;
+  return '.../'+parts.slice(-2).join('/');
+}
+
+function esc(s){
+  if(!s)return'';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function truncate(s,n){
+  return s.length<=n?s:s.substr(0,n)+'...';
+}
+
+function formatTime(ts){
+  if(!ts)return'';
+  try{
+    var d=new Date(ts);
+    var now=new Date();
+    var diff=now-d;
+    if(diff<60000)return'刚刚';
+    if(diff<3600000)return Math.floor(diff/60000)+'分钟前';
+    if(diff<86400000)return Math.floor(diff/3600000)+'小时前';
+    if(diff<604800000)return Math.floor(diff/86400000)+'天前';
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+  }catch(e){return ts;}
+}
+
+function pad(n){return n<10?'0'+n:n;}
+</script>
+</body>
+</html>

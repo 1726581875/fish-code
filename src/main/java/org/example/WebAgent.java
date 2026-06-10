@@ -23,6 +23,7 @@ public class WebAgent {
     private static String webPassword;
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
+    private static ClaudeHistoryReader claudeReader;
     private static final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "token-cleanup");
         t.setDaemon(true);
@@ -46,6 +47,9 @@ public class WebAgent {
         agent = new DeepSeekAgent(apiUrl, apiKey, model, sessionManager);
         agent.setMode(AgentMode.CONFIRM);
 
+        String claudeDir = ConfigLoader.getConfigString("claude_dir", "CLAUDE_DIR", "");
+        claudeReader = new ClaudeHistoryReader(claudeDir);
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (server != null) server.stop(2);
             cleanupExecutor.shutdownNow();
@@ -65,6 +69,9 @@ public class WebAgent {
             server.createContext("/mode", new ModeHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
+            server.createContext("/claude-history", new ClaudeHistoryPageHandler());
+            ClaudeSessionsHandler claudeHandler = new ClaudeSessionsHandler(claudeReader);
+            server.createContext("/claude-api", claudeHandler);
             server.setExecutor(new ThreadPoolExecutor(16, 16, 60L, TimeUnit.SECONDS,
                     new LinkedBlockingQueue<>(100), r -> {
                         Thread t = new Thread(r, "http-worker");
@@ -477,6 +484,24 @@ public class WebAgent {
                     sendJson(exchange, GSON.fromJson("{\"error\":\"未知操作\"}", JsonObject.class), 400);
                 }
             }
+        }
+    }
+
+    static class ClaudeHistoryPageHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                addCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            byte[] html = readHtml("claude-history.html");
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
         }
     }
 

@@ -61,6 +61,8 @@ public final class ToolUtils {
         File[] files = dir.listFiles();
         if (files == null) return;
 
+        boolean matchPath = useGlob && (pattern.contains("/") || pattern.contains("**"));
+
         for (File f : files) {
             if (results.size() >= ToolConstants.MAX_SEARCH_RESULTS) return;
 
@@ -69,13 +71,18 @@ public final class ToolUtils {
                 if (relPath.startsWith(File.separator)) {
                     relPath = relPath.substring(1);
                 }
-                String fileName = f.getName().toLowerCase();
+                String matchTarget;
+                if (matchPath) {
+                    matchTarget = relPath.replace('\\', '/');
+                } else {
+                    matchTarget = f.getName().toLowerCase();
+                }
                 if (useGlob) {
-                    if (globMatch(fileName, pattern)) {
+                    if (globMatch(matchTarget, pattern)) {
                         results.add(relPath);
                     }
                 } else {
-                    if (fileName.contains(pattern)) {
+                    if (matchTarget.contains(pattern)) {
                         results.add(relPath);
                     }
                 }
@@ -94,12 +101,33 @@ public final class ToolUtils {
 
     public static boolean globMatch(String name, String pattern) {
         if (!pattern.contains("*") && !pattern.contains("?")) {
-            return name.contains(pattern);
+            return name.equals(pattern);
         }
-        String regex = pattern
-                .replace(".", "\\.")
-                .replace("*", ".*")
-                .replace("?", ".");
-        return name.matches(regex);
+
+        StringBuilder regex = new StringBuilder("^");
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            switch (c) {
+                case '*':
+                    if (i + 1 < pattern.length() && pattern.charAt(i + 1) == '*') {
+                        regex.append(".*");
+                        i++;
+                    } else {
+                        regex.append("[^/]*");
+                    }
+                    break;
+                case '?':
+                    regex.append("[^/]");
+                    break;
+                case '.': case '+': case '(': case ')': case '{': case '}':
+                case '[': case ']': case '|': case '^': case '$': case '\\':
+                    regex.append("\\").append(c);
+                    break;
+                default:
+                    regex.append(c);
+            }
+        }
+        regex.append("$");
+        return name.matches(regex.toString());
     }
 }
