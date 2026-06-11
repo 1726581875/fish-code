@@ -10,6 +10,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.example.core.*;
 import org.example.tool.ToolConstants;
 
 public class WebAgent {
@@ -69,7 +70,10 @@ public class WebAgent {
             server.createContext("/mode", new ModeHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
+            server.createContext("/home", new HomePageHandler());
             server.createContext("/claude-history", new ClaudeHistoryPageHandler());
+            server.createContext("/claude-conversations", new ClaudeConversationsPageHandler());
+            server.createContext("/claude-flowchart", new FlowchartPageHandler());
             ClaudeSessionsHandler claudeHandler = new ClaudeSessionsHandler(claudeReader);
             server.createContext("/claude-api", claudeHandler);
             server.setExecutor(new ThreadPoolExecutor(16, 16, 60L, TimeUnit.SECONDS,
@@ -487,6 +491,43 @@ public class WebAgent {
         }
     }
 
+
+    static class HomePageHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                addCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            byte[] html = readHtml("home.html");
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        }
+    }
+
+    static class ClaudeConversationsPageHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                addCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            byte[] html = readHtml("claude-conversations.html");
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        }
+    }
+
     static class ClaudeHistoryPageHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -497,6 +538,24 @@ public class WebAgent {
                 return;
             }
             byte[] html = readHtml("claude-history.html");
+            addCorsHeaders(exchange);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, html.length);
+            exchange.getResponseBody().write(html);
+            exchange.close();
+        }
+    }
+
+    static class FlowchartPageHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                addCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            byte[] html = readHtml("claude-flowchart.html");
             addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             exchange.sendResponseHeaders(200, html.length);

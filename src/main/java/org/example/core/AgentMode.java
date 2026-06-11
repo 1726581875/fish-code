@@ -1,4 +1,4 @@
-package org.example;
+package org.example.core;
 
 import java.util.Set;
 import java.util.HashSet;
@@ -57,6 +57,10 @@ public enum AgentMode {
     public String color() { return color; }
     public String shortDesc() { return shortDesc; }
     public String systemPrompt() { return systemPrompt; }
+
+    public Set<String> getAllowedTools(){
+        return allowedTools;
+    }
 
     public AgentMode next() {
         AgentMode[] values = values();

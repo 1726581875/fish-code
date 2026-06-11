@@ -59,7 +59,7 @@ public class ReadFileTool extends Tool {
 
         Path filePath = Paths.get(file.getAbsolutePath());
         long totalLen = Files.lines(filePath, StandardCharsets.UTF_8)
-                .mapToLong(String::length).sum();
+                .mapToLong(line -> line.length() + 1).sum();
         if (offset >= totalLen) {
             return "(文件共 " + totalLen + " 字符，offset 超出范围)";
         }

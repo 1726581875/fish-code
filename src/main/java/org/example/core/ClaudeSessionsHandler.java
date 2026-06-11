@@ -1,4 +1,4 @@
-package org.example;
+package org.example.core;
 
 import com.google.gson.*;
 import com.sun.net.httpserver.*;
@@ -13,6 +13,14 @@ public class ClaudeSessionsHandler implements HttpHandler {
 
     public ClaudeSessionsHandler(ClaudeHistoryReader reader) {
         this.reader = reader;
+    }
+
+    private ClaudeHistoryReader getReader(HttpExchange exchange) {
+        String dir = getParam(exchange.getRequestURI().getQuery(), "dir");
+        if (dir != null && !dir.trim().isEmpty()) {
+            return new ClaudeHistoryReader(dir.trim());
+        }
+        return reader;
     }
 
     @Override
@@ -34,10 +42,16 @@ public class ClaudeSessionsHandler implements HttpHandler {
                 handleSessions(exchange);
             } else if ("/claude-api/session".equals(path)) {
                 handleSession(exchange);
+            } else if ("/claude-api/session-meta".equals(path)) {
+                handleSessionMeta(exchange);
             } else if ("/claude-api/search".equals(path)) {
                 handleSearch(exchange);
             } else if ("/claude-api/check".equals(path)) {
                 handleCheck(exchange);
+            } else if ("/claude-api/export".equals(path)) {
+                handleExport(exchange);
+            } else if ("/claude-api/history".equals(path)) {
+                handleHistory(exchange);
             } else {
                 sendError(exchange, 404, "未知端点");
             }
@@ -47,15 +61,17 @@ public class ClaudeSessionsHandler implements HttpHandler {
     }
 
     private void handleCheck(HttpExchange exchange) throws IOException {
+        ClaudeHistoryReader r = getReader(exchange);
         JsonObject result = new JsonObject();
-        result.addProperty("exists", reader.exists());
-        result.addProperty("path", reader.getClaudeDir().toString());
+        result.addProperty("exists", r.exists());
+        result.addProperty("path", r.getClaudeDir().toString());
         sendJson(exchange, result, 200);
     }
 
     private void handleProjects(HttpExchange exchange) throws IOException {
+        ClaudeHistoryReader r = getReader(exchange);
         JsonArray projects = new JsonArray();
-        for (JsonObject p : reader.listProjects()) {
+        for (JsonObject p : r.listProjects()) {
             projects.add(p);
         }
         JsonObject result = new JsonObject();
@@ -70,8 +86,11 @@ public class ClaudeSessionsHandler implements HttpHandler {
             sendError(exchange, 400, "缺少 project 参数");
             return;
         }
+        String after = getParam(query, "after");
+        String before = getParam(query, "before");
+        ClaudeHistoryReader r = getReader(exchange);
         JsonArray sessions = new JsonArray();
-        for (JsonObject s : reader.listSessions(projectHash)) {
+        for (JsonObject s : r.listSessions(projectHash, after, before)) {
             sessions.add(s);
         }
         JsonObject result = new JsonObject();
@@ -88,12 +107,32 @@ public class ClaudeSessionsHandler implements HttpHandler {
             sendError(exchange, 400, "缺少 project 或 id 参数");
             return;
         }
-        JsonObject session = reader.getSession(projectHash, sessionId);
+        int offset = getIntParam(query, "offset", 0);
+        int limit = getIntParam(query, "limit", 50);
+        ClaudeHistoryReader r = getReader(exchange);
+        JsonObject session = r.getSession(projectHash, sessionId, offset, limit);
         if (session == null) {
             sendError(exchange, 404, "会话不存在");
             return;
         }
         sendJson(exchange, session, 200);
+    }
+
+    private void handleSessionMeta(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        String projectHash = getParam(query, "project");
+        String sessionId = getParam(query, "id");
+        if (projectHash == null || sessionId == null) {
+            sendError(exchange, 400, "缺少 project 或 id 参数");
+            return;
+        }
+        ClaudeHistoryReader r = getReader(exchange);
+        JsonObject meta = r.getSessionMeta(projectHash, sessionId);
+        if (meta == null) {
+            sendError(exchange, 404, "会话不存在");
+            return;
+        }
+        sendJson(exchange, meta, 200);
     }
 
     private void handleSearch(HttpExchange exchange) throws IOException {
@@ -103,13 +142,53 @@ public class ClaudeSessionsHandler implements HttpHandler {
             sendError(exchange, 400, "缺少搜索关键词");
             return;
         }
+        int maxResults = getIntParam(query, "limit", 50);
+        ClaudeHistoryReader r = getReader(exchange);
         JsonArray results = new JsonArray();
-        for (JsonObject r : reader.searchSessions(keyword.trim())) {
-            results.add(r);
+        for (JsonObject s : r.searchSessions(keyword.trim(), maxResults)) {
+            results.add(s);
         }
         JsonObject result = new JsonObject();
         result.add("results", results);
         result.addProperty("total", results.size());
+        sendJson(exchange, result, 200);
+    }
+
+    private void handleExport(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        String projectHash = getParam(query, "project");
+        String sessionId = getParam(query, "id");
+        if (projectHash == null || sessionId == null) {
+            sendError(exchange, 400, "缺少 project 或 id 参数");
+            return;
+        }
+        ClaudeHistoryReader r = getReader(exchange);
+        String md = r.exportSessionMarkdown(projectHash, sessionId);
+        if (md == null) {
+            sendError(exchange, 404, "会话不存在");
+            return;
+        }
+        addCorsHeaders(exchange);
+        exchange.getResponseHeaders().set("Content-Type", "text/markdown; charset=utf-8");
+        exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"" + sessionId + ".md\"");
+        byte[] resp = md.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(200, resp.length);
+        exchange.getResponseBody().write(resp);
+        exchange.close();
+    }
+
+    private void handleHistory(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        int limit = getIntParam(query, "limit", 100);
+        String project = getParam(query, "project");
+        ClaudeHistoryReader r = getReader(exchange);
+        JsonArray items = new JsonArray();
+        for (JsonObject item : r.listPromptHistory(limit, project)) {
+            items.add(item);
+        }
+        JsonObject result = new JsonObject();
+        result.add("items", items);
+        result.addProperty("total", items.size());
         sendJson(exchange, result, 200);
     }
 
@@ -126,6 +205,16 @@ public class ClaudeSessionsHandler implements HttpHandler {
             }
         }
         return null;
+    }
+
+    private int getIntParam(String query, String name, int defaultValue) {
+        String val = getParam(query, name);
+        if (val == null) return defaultValue;
+        try {
+            return Integer.parseInt(val);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 
     private void sendJson(HttpExchange exchange, JsonObject json, int code) throws IOException {

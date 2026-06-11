@@ -7,6 +7,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+import org.example.core.*;
 import org.example.tool.*;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
@@ -138,7 +139,7 @@ public class DeepSeekAgent {
         List<Tool> list = new ArrayList<>();
         toolMap.clear();
         for (Tool t : all) {
-            if (mode.allowedTools.contains(t.getName())) {
+            if (mode.getAllowedTools().contains(t.getName())) {
                 list.add(t);
                 toolMap.put(t.getName(), t);
             }

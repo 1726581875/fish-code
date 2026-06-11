@@ -55,18 +55,38 @@ public class RunCommandTool extends Tool {
         Process process = pb.start();
 
         StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
+        java.util.concurrent.ExecutorService readExecutor = java.util.concurrent.Executors
+                .newSingleThreadExecutor(r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true);
+                    return t;
+                });
+        java.util.concurrent.Future<?> readFuture = readExecutor.submit(() -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            } catch (IOException e) {
+                output.append("读取输出出错: ").append(e.getMessage());
             }
-        }
+        });
 
-        boolean finished = process.waitFor(ToolConstants.COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        if (!finished) {
-            process.destroyForcibly();
-            return output + "\n(命令超时，已强制终止)";
+        try {
+            boolean finished = process.waitFor(ToolConstants.COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                readFuture.cancel(true);
+                return output + "\n(命令超时，已强制终止)";
+            }
+            try {
+                readFuture.get(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                output.append("\n(读取输出超时)");
+            }
+        } finally {
+            readExecutor.shutdownNow();
         }
 
         int exitCode = process.exitValue();

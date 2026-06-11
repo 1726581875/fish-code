@@ -1,4 +1,4 @@
-package org.example;
+package org.example.core;
 
 public interface StreamCallback {
     void onToken(String token);

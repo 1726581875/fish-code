@@ -1,4 +1,4 @@
-package org.example;
+package org.example.core;
 
 public class ChatResult {
     private final String reply;

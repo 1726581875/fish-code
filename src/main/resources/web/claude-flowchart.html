@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Flowchart - Fish Code</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f4f5f7;color:#1a1a2e;font-family:system-ui,-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+.head{background:#fff;border-bottom:1px solid #ddd;padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;z-index:10}
+.head h1{font-size:15px;font-weight:700;color:#222;white-space:nowrap}
+.head .sep{color:#ddd}
+.head .dir-row{display:flex;align-items:center;gap:6px}
+.head .dir-label{font-size:11px;color:#999;white-space:nowrap}
+.head .dir-input{border:1px solid #ddd;border-radius:5px;padding:3px 8px;font-size:11px;outline:none;background:#fafafa;font-family:'Cascadia Code',Consolas,monospace;color:#555;width:260px}
+.head .dir-input:focus{border-color:#7c5cfc;background:#fff}
+.head .dir-status{font-size:10px;white-space:nowrap}
+.head .dir-status.ok{color:#2da44e}
+.head .dir-status.err{color:#d73a49}
+.head .btn{border:1px solid #ddd;background:#fff;color:#555;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;text-decoration:none;transition:all .15s}
+.head .btn:hover{border-color:#7c5cfc;color:#7c5cfc}
+.head a.btn{text-decoration:none}
+
+.main-wrap{display:flex;flex:1;overflow:hidden}
+
+.left-panel{width:280px;background:#fff;border-right:1px solid #ddd;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.left-search{padding:8px 10px;border-bottom:1px solid #eee}
+.left-search input{width:100%;border:1px solid #ddd;border-radius:5px;padding:5px 8px;font-size:12px;outline:none;background:#fafafa}
+.left-search input:focus{border-color:#7c5cfc;background:#fff}
+.left-section{flex:1;overflow-y:auto}
+.section-title{padding:8px 12px;font-size:11px;color:#999;font-weight:600;border-bottom:1px solid #f0f0f0;position:sticky;top:0;background:#f8f8f8;z-index:1}
+
+.proj-item{border-bottom:1px solid #f0f0f0}
+.proj-head{padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .12s;user-select:none}
+.proj-head:hover{background:#fafafa}
+.proj-head .arrow{font-size:10px;color:#aaa;transition:transform .2s;flex-shrink:0;width:12px;text-align:center}
+.proj-head .arrow.open{transform:rotate(90deg)}
+.proj-head .info{flex:1;min-width:0}
+.proj-head .path{font-size:12px;font-weight:600;color:#1a1a2e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proj-head .meta{font-size:10px;color:#999;margin-top:1px}
+.proj-head .count{font-size:11px;color:#7c5cfc;font-weight:600}
+.proj-body{display:none;border-top:1px solid #f5f5f5}
+.proj-body.open{display:block}
+
+.sess-item{padding:7px 12px 7px 28px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .12s}
+.sess-item:hover{background:#fafafa}
+.sess-item.active{background:#eef0ff;border-left:3px solid #7c5cfc;padding-left:25px}
+.sess-item .s-id{font-size:10px;font-weight:600;color:#555;font-family:'Cascadia Code',Consolas,monospace}
+.sess-item .s-summary{font-size:10px;color:#999;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.sess-item .s-meta{font-size:9px;color:#bbb;margin-top:2px;display:flex;gap:8px}
+.sess-item .s-meta b{color:#888}
+
+.right-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#f4f5f7}
+.fc-header{background:#fff;border-bottom:1px solid #eee;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;flex-wrap:wrap}
+.fc-stats{display:flex;gap:14px;font-size:11px;color:#888;flex-wrap:wrap}
+.fc-stats b{color:#444}
+.fc-actions{margin-left:auto;display:flex;gap:6px}
+.fc-body{flex:1;overflow-y:auto;padding:24px 0}
+
+.fc-flow{position:relative;max-width:720px;margin:0 auto;padding:0 20px}
+.fc-flow::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:2px;background:linear-gradient(180deg,#ddd 0%,#ccc 50%,#ddd 100%);transform:translateX(-50%);z-index:0}
+
+.fc-node{position:relative;margin-bottom:16px;z-index:1;display:flex;align-items:flex-start}
+.fc-node.user{justify-content:flex-start}
+.fc-node.assistant{justify-content:flex-end}
+.fc-node.tool-use{justify-content:center}
+.fc-node.tool-result{justify-content:center}
+.fc-node.thinking{justify-content:center}
+.fc-node.system{justify-content:center}
+
+.fc-card{position:relative;background:#fff;border-radius:10px;border:1px solid #e0e0e0;box-shadow:0 1px 4px rgba(0,0,0,.05);max-width:560px;width:auto;overflow:hidden;transition:box-shadow .15s}
+.fc-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.1)}
+.fc-node.user .fc-card{border-color:#c8e6c9}
+.fc-node.assistant .fc-card{border-color:#d9d0f0}
+.fc-node.tool-use .fc-card{border-color:#ffd4a8}
+.fc-node.tool-result .fc-card{border-color:#c0d8f0}
+.fc-node.thinking .fc-card{border-color:#e2d4f7}
+.fc-node.system .fc-card{border-color:#e0e0e0}
+
+.fc-dot{position:absolute;left:50%;top:18px;width:12px;height:12px;border-radius:50%;border:2px solid #ddd;background:#fff;z-index:2;transform:translateX(-50%)}
+.fc-node.user .fc-dot{background:#e6ffed;border-color:#2da44e}
+.fc-node.assistant .fc-dot{background:#f0ecff;border-color:#6750a4}
+.fc-node.tool-use .fc-dot{background:#fff3e0;border-color:#e65100}
+.fc-node.tool-result .fc-dot{background:#e8f0fe;border-color:#0969da}
+.fc-node.thinking .fc-dot{background:#f5f0ff;border-color:#a855f7}
+.fc-node.system .fc-dot{background:#f0f0f0;border-color:#999}
+
+.fc-nhead{padding:7px 12px;display:flex;align-items:center;gap:6px;font-size:10px;border-bottom:1px solid #f0f0f0}
+.fc-node.user .fc-nhead{background:#f6fff8;border-bottom-color:#d8f0da}
+.fc-node.assistant .fc-nhead{background:#faf9ff;border-bottom-color:#e8e4f5}
+.fc-node.tool-use .fc-nhead{background:#fff8f0;border-bottom-color:#ffd4a8}
+.fc-node.tool-result .fc-nhead{background:#f6f9ff;border-bottom-color:#d0e0f5}
+.fc-node.thinking .fc-nhead{background:#faf7ff;border-bottom-color:#e4d6f7}
+.fc-node.system .fc-nhead{background:#f8f8f8;border-bottom-color:#e8e8e8}
+
+.fc-icon{font-size:12px}
+.fc-type{font-weight:700;text-transform:uppercase;letter-spacing:.3px}
+.fc-node.user .fc-type{color:#1a7f37}
+.fc-node.assistant .fc-type{color:#6750a4}
+.fc-node.tool-use .fc-type{color:#e65100}
+.fc-node.tool-result .fc-type{color:#0969da}
+.fc-node.thinking .fc-type{color:#7c3aed}
+.fc-node.system .fc-type{color:#888}
+.fc-model{font-size:9px;color:#aaa;background:#f0f0f0;padding:1px 4px;border-radius:3px}
+.fc-step{font-size:9px;color:#bbb;margin-left:auto}
+.fc-time{font-size:9px;color:#ccc}
+
+.fc-content{padding:8px 12px;line-height:1.6;font-size:12px;white-space:pre-wrap;word-break:break-word;color:#333}
+.fc-node.system .fc-content{font-size:11px;color:#777;text-align:center}
+.fc-node.thinking .fc-content{font-style:italic;color:#777;font-size:11px}
+.fc-content code{background:#f0f0f0;border:1px solid #e0e0e0;border-radius:3px;padding:0 3px;font-family:'Cascadia Code',Consolas,monospace;font-size:10px}
+.fc-content pre{background:#f5f5f5;border:1px solid #e0e0e0;border-radius:5px;padding:8px;margin:4px 0;overflow-x:auto;font-family:'Cascadia Code',Consolas,monospace;font-size:10px;line-height:1.5}
+.fc-content pre code{background:none;border:none;padding:0}
+
+.fc-tool{margin-top:4px;border:1px solid #eee;border-radius:5px;overflow:hidden}
+.fc-tool .ft-head{padding:4px 8px;background:#fafafa;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:10px;color:#888}
+.fc-tool .ft-head:hover{background:#f3f3f3}
+.fc-tool .ft-arrow{font-size:8px;transition:transform .15s;color:#ccc}
+.fc-tool .ft-arrow.open{transform:rotate(90deg)}
+.fc-tool .ft-body{display:none;padding:6px 8px;border-top:1px solid #eee;background:#fafbfc;font-family:'Cascadia Code',Consolas,monospace;font-size:10px;line-height:1.5;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#555;max-height:250px;overflow-y:auto}
+.fc-tool .ft-body.open{display:block}
+
+.fc-tokens{font-size:9px;color:#bbb;padding:3px 12px 6px}
+
+.fc-empty{text-align:center;color:#aaa;padding:80px 20px}
+.fc-empty .icon{font-size:48px;margin-bottom:12px}
+.fc-empty .text{font-size:13px;line-height:1.6}
+.fc-loading{text-align:center;color:#bbb;padding:40px;font-size:13px}
+.fc-error{background:#fff0f0;border:1px solid #ffd0d0;color:#c00;padding:10px 14px;border-radius:6px;font-size:12px;margin:12px 20px}
+
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#ccc}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Claude Flowchart</h1>
+  <span class="sep">|</span>
+  <div class="dir-row">
+    <span class="dir-label">目录:</span>
+    <input class="dir-input" id="dirInput" placeholder="留空使用默认 ~/.claude" onchange="switchDir()">
+    <span class="dir-status" id="dirStatus"></span>
+  </div>
+  <button class="btn" onclick="refreshAll()">刷新</button>
+  <a class="btn" href="/home">首页</a>
+</div>
+<div class="main-wrap">
+  <div class="left-panel">
+    <div class="left-search">
+      <input id="searchInput" placeholder="搜索对话内容..." onkeydown="if(event.key==='Enter')doSearch()">
+    </div>
+    <div class="left-section" id="leftSection">
+      <div class="section-title">项目列表</div>
+      <div id="projList"><div class="fc-loading">加载中...</div></div>
+      <div id="sessList"></div>
+      <div id="searchResults" style="display:none"></div>
+    </div>
+  </div>
+  <div class="right-panel">
+    <div class="fc-header" id="fcHeader" style="display:none">
+      <span style="font-size:12px;font-weight:600;color:#444" id="sessTitle"></span>
+      <div class="fc-stats" id="fcStats"></div>
+      <div class="fc-actions">
+        <button class="btn" onclick="loadSession()">刷新</button>
+        <button class="btn" onclick="exportSession()">导出</button>
+      </div>
+    </div>
+    <div class="fc-body" id="fcBody">
+      <div class="fc-empty"><div class="icon">&#x1f4ca;</div><div class="text">选择左侧项目和会话<br>查看对话流程图</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var currentDir='',projects=[],currentProject='',currentSession='',sessionData=null;
+var nodeIdx=0;
+
+(function init(){
+  currentDir=localStorage.getItem('claudeFlowDir')||'';
+  if(currentDir) document.getElementById('dirInput').value=currentDir;
+  checkDir();
+})();
+
+function api(url){
+  if(currentDir) url+=(url.indexOf('?')>=0?'&':'?')+'dir='+encodeURIComponent(currentDir);
+  return url;
+}
+
+function switchDir(){
+  var v=document.getElementById('dirInput').value.trim();
+  if(v===currentDir) return;
+  currentDir=v;
+  localStorage.setItem('claudeFlowDir',v);
+  checkDir();
+}
+
+function checkDir(){
+  var st=document.getElementById('dirStatus');
+  st.textContent='检测中...';st.className='dir-status';
+  fetch(api('/claude-api/check')).then(function(r){return r.json()}).then(function(d){
+    if(d.exists){st.textContent='可用';st.className='dir-status ok';}
+    else{st.textContent=currentDir?'不存在':'不可用';st.className='dir-status err';}
+    loadProjects();
+  }).catch(function(){st.textContent='连接失败';st.className='dir-status err';});
+}
+
+function refreshAll(){checkDir();}
+
+function loadProjects(){
+  document.getElementById('projList').innerHTML='<div class="fc-loading">加载中...</div>';
+  document.getElementById('sessList').innerHTML='';
+  document.getElementById('searchResults').style.display='none';
+  document.getElementById('projList').style.display='';
+  fetch(api('/claude-api/projects')).then(function(r){return r.json()}).then(function(d){
+    projects=d.projects||[];
+    renderProjects();
+  }).catch(function(){document.getElementById('projList').innerHTML='<div class="fc-loading">加载失败</div>';});
+}
+
+function renderProjects(){
+  var el=document.getElementById('projList');
+  if(!projects.length){el.innerHTML='<div class="fc-loading" style="color:#aaa">没有找到项目</div>';return;}
+  el.innerHTML=projects.map(function(p){
+    return '<div class="proj-item" id="pi-'+esc(p.hash)+'">'+
+      '<div class="proj-head" onclick="toggleProj(\''+esc(p.hash)+'\')">'+
+        '<span class="arrow" id="pa-'+esc(p.hash)+'">&#x25b6;</span>'+
+        '<div class="info"><div class="path" title="'+esc(p.path)+'">'+esc(shortPath(p.path))+'</div>'+
+        '<div class="meta">'+p.sessionCount+' 个会话</div></div>'+
+        '<span class="count">'+p.sessionCount+'</span>'+
+      '</div>'+
+      '<div class="proj-body" id="pb-'+esc(p.hash)+'"></div>'+
+    '</div>';
+  }).join('');
+}
+
+function toggleProj(hash){
+  var body=document.getElementById('pb-'+hash);
+  var arrow=document.getElementById('pa-'+hash);
+  if(!body) return;
+  if(body.classList.contains('open')){
+    body.classList.remove('open');arrow.classList.remove('open');
+  } else {
+    body.classList.add('open');arrow.classList.add('open');
+    if(!body.innerHTML) loadSessList(hash);
+  }
+}
+
+function loadSessList(hash){
+  var el=document.getElementById('pb-'+hash);
+  el.innerHTML='<div class="fc-loading" style="padding:8px">加载会话...</div>';
+  fetch(api('/claude-api/sessions?project='+encodeURIComponent(hash))).then(function(r){return r.json()}).then(function(d){
+    var sessions=d.sessions||[];
+    if(!sessions.length){el.innerHTML='<div class="fc-loading" style="padding:8px;color:#aaa">没有会话</div>';return;}
+    el.innerHTML=sessions.map(function(s){
+      var summary=s.summary?esc(truncate(s.summary,50)):'';
+      var active=(currentSession===s.id)?' active':'';
+      return '<div class="sess-item'+active+'" id="si-'+esc(s.id)+'" onclick="selectSession(\''+esc(hash)+'\',\''+esc(s.id)+'\')">'+
+        '<div class="s-id">'+esc(s.id)+'</div>'+
+        (summary?'<div class="s-summary">'+summary+'</div>':'')+
+        '<div class="s-meta"><span><b>'+s.messageCount+'</b> 条</span><span><b>'+s.toolCallCount+'</b> 工具</span></div>'+
+      '</div>';
+    }).join('');
+  }).catch(function(){el.innerHTML='<div class="fc-loading" style="padding:8px">加载失败</div>';});
+}
+
+function selectSession(hash,sessId){
+  currentProject=hash;currentSession=sessId;
+  document.querySelectorAll('.sess-item').forEach(function(el){el.classList.remove('active');});
+  var si=document.getElementById('si-'+sessId);
+  if(si) si.classList.add('active');
+  document.getElementById('fcHeader').style.display='flex';
+  document.getElementById('fcBody').innerHTML='<div class="fc-loading">加载流程图...</div>';
+  loadSession();
+}
+
+function loadSession(){
+  if(!currentProject||!currentSession) return;
+  document.getElementById('fcBody').innerHTML='<div class="fc-loading">加载流程图...</div>';
+  fetch(api('/claude-api/session?project='+encodeURIComponent(currentProject)+'&id='+encodeURIComponent(currentSession)+'&limit=200')).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(d){
+    sessionData=d;
+    renderFlowchart(d);
+  }).catch(function(err){
+    document.getElementById('fcBody').innerHTML='<div class="fc-error">加载失败: '+esc(err.message)+'</div>';
+  });
+}
+
+function renderFlowchart(session){
+  var msgs=session.messages||[];
+  var el=document.getElementById('fcBody');
+
+  document.getElementById('sessTitle').textContent=session.id||'';
+  document.getElementById('fcStats').innerHTML=
+    '<span>消息: <b>'+(session.totalMessages||0)+'</b></span>'+
+    '<span>工具调用: <b>'+(session.toolCallCount||0)+'</b></span>'+
+    '<span>Token: <b>'+fmtK(session.totalInputTokens||0)+' in / '+fmtK(session.totalOutputTokens||0)+' out</b></span>';
+
+  if(!msgs.length){el.innerHTML='<div class="fc-empty"><div class="text">会话为空</div></div>';return;}
+
+  nodeIdx=0;
+  var html='<div class="fc-flow">';
+  msgs.forEach(function(msg,i){
+    html+=renderFCNode(msg,i);
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function renderFCNode(msg,idx){
+  var role=msg.role||'';
+  var ts=msg.timestamp?fTime(msg.timestamp):'';
+  var model=msg.model?esc(msg.model):'';
+
+  if(role==='system'){
+    return '<div class="fc-node system">'+
+      '<div class="fc-dot"></div>'+
+      '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x2139;</span><span class="fc-type">Summary</span><span class="fc-time">'+ts+'</span></div>'+
+      '<div class="fc-content">'+renderMd(extractText(msg.content))+'</div></div></div>';
+  }
+
+  if(role==='user'){
+    var uid='fu-'+(nodeIdx++);
+    var fullText=extractText(msg.content);
+    var rawLen=0;
+    if(Array.isArray(msg.content)){
+      msg.content.forEach(function(b){
+        if(b.type==='tool_result'&&b.content) rawLen+=String(b.content).length;
+        else if(b.type==='text'&&b.text) rawLen+=b.text.length;
+      });
+    } else if(typeof msg.content==='string') rawLen=msg.content.length;
+    var needCollapse=rawLen>200||fullText.length>200;
+    var contentHtml=needCollapse?
+      '<div class="fc-tool"><div class="ft-head" onclick="toggleFT(\''+uid+'\',event)"><span class="ft-arrow" id="fa-'+uid+'">&#x25b6;</span> 展开查看全部 ('+fmtK(rawLen)+' 字符)</div>'+
+      '<div class="ft-body" id="fb-'+uid+'">'+esc(fullText)+'</div></div>':
+      '<div>'+renderMd(fullText)+'</div>';
+    return '<div class="fc-node user">'+
+      '<div class="fc-dot"></div>'+
+      '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f464;</span><span class="fc-type">User</span><span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+      '<div class="fc-content">'+contentHtml+'</div></div></div>';
+  }
+
+  var usage='';
+  if(msg.usage){var u=msg.usage;usage='<div class="fc-tokens">Token: '+(u.input_tokens||0)+' in / '+(u.output_tokens||0)+' out</div>';}
+
+  if(typeof msg.content==='string'){
+    var aid='fa-'+(nodeIdx++);
+    var needCollapse=msg.content.length>300;
+    var contentHtml=needCollapse?
+      '<div class="fc-tool"><div class="ft-head" onclick="toggleFT(\''+aid+'\',event)"><span class="ft-arrow" id="fa-'+aid+'">&#x25b6;</span> 展开查看全部 ('+fmtK(msg.content.length)+' 字符)</div>'+
+      '<div class="ft-body" id="fb-'+aid+'">'+esc(msg.content)+'</div></div>':
+      '<div>'+renderMd(msg.content)+'</div>';
+    return '<div class="fc-node assistant">'+
+      '<div class="fc-dot"></div>'+
+      '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f916;</span><span class="fc-type">Claude</span>'+(model?'<span class="fc-model">'+model+'</span>':'')+'<span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+      '<div class="fc-content">'+contentHtml+'</div>'+usage+'</div></div>';
+  }
+
+  if(Array.isArray(msg.content)){
+    var nodes='';
+    msg.content.forEach(function(b){
+      if(b.type==='text'){
+        var btid='fbt-'+(nodeIdx++);
+        var bText=b.text||'';
+        var needColl=bText.length>300;
+        var bContentHtml=needColl?
+          '<div class="fc-tool"><div class="ft-head" onclick="toggleFT(\''+btid+'\',event)"><span class="ft-arrow" id="fa-'+btid+'">&#x25b6;</span> 展开查看全部 ('+fmtK(bText.length)+' 字符)</div>'+
+          '<div class="ft-body" id="fb-'+btid+'">'+esc(bText)+'</div></div>':
+          '<div>'+renderMd(bText)+'</div>';
+        nodes+='<div class="fc-node assistant">'+
+          '<div class="fc-dot"></div>'+
+          '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f916;</span><span class="fc-type">Claude</span>'+(model?'<span class="fc-model">'+model+'</span>':'')+'<span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+          '<div class="fc-content">'+bContentHtml+'</div>'+usage+'</div></div>';
+      } else if(b.type==='tool_use'){
+        var tid='ft-'+(nodeIdx++);
+        nodes+='<div class="fc-node tool-use">'+
+          '<div class="fc-dot"></div>'+
+          '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f527;</span><span class="fc-type">'+esc(b.name||'tool')+'</span><span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+          '<div class="fc-content"><div>调用工具: <b>'+esc(b.name||'')+'</b></div>'+
+          '<div class="fc-tool"><div class="ft-head" onclick="toggleFT(\''+tid+'\',event)"><span class="ft-arrow" id="fa-'+tid+'">&#x25b6;</span> 参数详情</div>'+
+          '<div class="ft-body" id="fb-'+tid+'">'+esc(JSON.stringify(b.input||{},null,2))+'</div></div></div></div></div>';
+      } else if(b.type==='tool_result'){
+        var rid='fr-'+(nodeIdx++);
+        var content=esc(b.content||'');
+        nodes+='<div class="fc-node tool-result">'+
+          '<div class="fc-dot"></div>'+
+          '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f4cb;</span><span class="fc-type">Result</span><span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+          '<div class="fc-content"><div class="fc-tool"><div class="ft-head" onclick="toggleFT(\''+rid+'\',event)"><span class="ft-arrow" id="fa-'+rid+'">&#x25b6;</span> 查看结果 ('+fmtK(content.length)+' 字符)</div>'+
+          '<div class="ft-body" id="fb-'+rid+'">'+content+'</div></div></div></div></div>';
+      } else if(b.type==='thinking'){
+        nodes+='<div class="fc-node thinking">'+
+          '<div class="fc-dot"></div>'+
+          '<div class="fc-card"><div class="fc-nhead"><span class="fc-icon">&#x1f4ad;</span><span class="fc-type">Thinking</span><span class="fc-step">Step '+(idx+1)+'</span><span class="fc-time">'+ts+'</span></div>'+
+          '<div class="fc-content">'+esc(b.thinking||'')+'</div></div></div>';
+      }
+    });
+    return nodes;
+  }
+  return '';
+}
+
+function toggleFT(id,evt){
+  if(evt) evt.stopPropagation();
+  var body=document.getElementById('fb-'+id);
+  var arrow=document.getElementById('fa-'+id);
+  if(!body) return;
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function exportSession(){
+  if(!currentProject||!currentSession) return;
+  window.open(api('/claude-api/export?project='+encodeURIComponent(currentProject)+'&id='+encodeURIComponent(currentSession)),'_blank');
+}
+
+function doSearch(){
+  var q=document.getElementById('searchInput').value.trim();
+  if(!q) return;
+  document.getElementById('projList').style.display='none';
+  document.getElementById('sessList').innerHTML='';
+  var el=document.getElementById('searchResults');
+  el.style.display='';
+  el.innerHTML='<div class="fc-loading">搜索中...</div>';
+  fetch(api('/claude-api/search?q='+encodeURIComponent(q)+'&limit=50')).then(function(r){return r.json()}).then(function(d){
+    var results=d.results||[];
+    if(!results.length){el.innerHTML='<div class="fc-loading" style="color:#aaa">没有匹配结果</div>';return;}
+    el.innerHTML='<div class="section-title">搜索结果 ('+results.length+')</div>'+
+      results.map(function(r){
+        var snippet=esc(truncate(r.snippet||'',80));
+        return '<div class="sess-item" onclick="jumpToSession(\''+esc(r.projectHash)+'\',\''+esc(r.sessionId)+'\')">'+
+          '<div class="s-id">'+esc(r.sessionId)+'</div>'+
+          '<div class="s-summary">'+snippet+'</div>'+
+          '<div class="s-meta"><span>'+fTime(r.timestamp)+'</span></div></div>';
+      }).join('');
+  }).catch(function(){el.innerHTML='<div class="fc-loading">搜索失败</div>';});
+}
+
+function jumpToSession(hash,sessId){
+  document.getElementById('searchInput').value='';
+  document.getElementById('searchResults').style.display='none';
+  document.getElementById('projList').style.display='';
+  currentProject=hash;currentSession=sessId;
+  toggleProj(hash);
+  setTimeout(function(){
+    var si=document.getElementById('si-'+sessId);
+    if(si){si.click();si.scrollIntoView({behavior:'smooth',block:'center'});}
+    else{
+      document.getElementById('fcHeader').style.display='flex';
+      document.getElementById('fcBody').innerHTML='<div class="fc-loading">加载流程图...</div>';
+      loadSession();
+    }
+  },300);
+}
+
+function renderMd(text){
+  if(!text) return '';
+  var s=esc(text);
+  s=s.replace(/```(\w*)\n?([\s\S]*?)```/g,function(m,lang,code){return '<pre><code>'+code+'</code></pre>';});
+  s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  s=s.replace(/\*([^*]+)\*/g,'<em>$1</em>');
+  s=s.replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>');
+  s=s.replace(/^- (.+)$/gm,'<li>$1</li>');
+  s=s.replace(/(<li>.*<\/li>)/s,function(m){return '<ul>'+m+'</ul>';});
+  s=s.replace(/\n/g,'<br>');
+  return s;
+}
+
+function extractText(content){
+  if(!content) return '';
+  if(typeof content==='string') return content;
+  if(Array.isArray(content)){
+    var textParts=[];
+    var otherParts=[];
+    content.forEach(function(b){
+      if(b.type==='text'&&b.text) textParts.push(b.text);
+      else if(b.type==='tool_result'){
+        var c=typeof b.content==='string'?b.content:JSON.stringify(b.content||'');
+        otherParts.push('[Result] '+c);
+      }
+      else if(b.type==='tool_use') otherParts.push('[Tool: '+(b.name||'')+']');
+      else if(b.type==='thinking') otherParts.push('[Thinking] '+(b.thinking||''));
+    });
+    if(textParts.length) return textParts.join('\n');
+    if(otherParts.length) return otherParts.join('\n');
+    return JSON.stringify(content);
+  }
+  return String(content);
+}
+
+function shortPath(p){
+  if(!p) return '';
+  var parts=p.split(/[/\\]/);
+  if(parts.length<=3) return p;
+  return '.../'+parts.slice(-2).join('/');
+}
+function esc(s){
+  if(!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function truncate(s,n){return String(s||'').length<=n?String(s||''):String(s||'').substring(0,n)+'...';}
+function fmtK(n){if(n>=1000000)return(n/1000000).toFixed(1)+'M';if(n>=1000)return(n/1000).toFixed(1)+'K';return String(n);}
+function fTime(ts){
+  if(!ts)return '';
+  try{var d=new Date(ts);var now=new Date();var diff=now-d;if(diff<0)diff=0;
+  if(diff<60000)return'刚刚';if(diff<3600000)return Math.floor(diff/60000)+'分钟前';
+  if(diff<86400000)return Math.floor(diff/3600000)+'小时前';if(diff<604800000)return Math.floor(diff/86400000)+'天前';
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+  }catch(e){return ts;}
+}
+function pad(n){return n<10?'0'+n:n;}
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fish Code</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f0f2f5;color:#1a1a2e;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:16px;padding:48px 40px;text-align:center;box-shadow:0 2px 16px rgba(0,0,0,.06);max-width:420px;width:90%}
+.card h1{font-size:24px;font-weight:700;color:#1a1a2e;margin-bottom:6px}
+.card .sub{font-size:13px;color:#888;margin-bottom:32px}
+.links{display:flex;flex-direction:column;gap:12px}
+.links a{display:block;padding:14px 20px;border-radius:10px;text-decoration:none;font-size:14px;font-weight:600;transition:all .15s;border:1px solid #eee}
+.links a:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.links a.primary{background:#7c5cfc;color:#fff;border-color:#7c5cfc}
+.links a.primary:hover{background:#6a4de8}
+.links a.secondary{background:#fff;color:#444}
+.links a.secondary:hover{border-color:#7c5cfc;color:#7c5cfc}
+.links a .desc{display:block;font-size:11px;font-weight:400;color:inherit;opacity:.7;margin-top:3px}
+.links a.primary .desc{opacity:.85}
+.footer{margin-top:32px;font-size:11px;color:#bbb}
+.footer a{color:#999;text-decoration:none}
+.footer a:hover{color:#7c5cfc}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Fish Code</h1>
+  <div class="sub">本地 Claude Code 对话记录浏览</div>
+  <div class="links">
+    <a class="primary" href="/ai-chat" style="background:#2da44e;border-color:#2da44e">
+      🤖 AI 对话
+      <span class="desc">与 DeepSeek AI 实时对话 · 流式输出 · Markdown 渲染</span>
+    </a>
+    <a class="primary" href="/claude-conversations">
+      对话浏览
+      <span class="desc">聊天气泡布局 · 支持切换目录 · 搜索与导出</span>
+    </a>
+    <a class="secondary" href="/claude-history">
+      历史记录
+      <span class="desc">三栏面板布局 · 项目/会话/详情 · 日期筛选</span>
+    </a>
+    <a class="secondary" href="/claude-flowchart">
+      流程图视图
+      <span class="desc">左右分栏布局 · 节点流程图 · 对话流转一目了然</span>
+    </a>
+  </div>
+  <div class="footer">
+    <a href="/">Fish Code Chat</a>
+  </div>
+</div>
+</body>
+</html>

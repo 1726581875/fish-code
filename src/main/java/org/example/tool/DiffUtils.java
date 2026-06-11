@@ -240,9 +240,6 @@ public final class DiffUtils {
         for (int i = 0; i < charIdx; i++) {
             if (content.charAt(i) == '\n') lines++;
         }
-        if (content.indexOf(target, charIdx + 1) >= 0) {
-            return lines;
-        }
         return lines;
     }
 
