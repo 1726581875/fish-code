@@ -13,12 +13,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.example.core.*;
 import org.example.tool.ToolConstants;
 
-public class WebAgent {
+public class WebStart {
 
     private static final Gson GSON = new Gson();
     private static final int PORT = 10000;
     private static HttpServer server;
-    private static DeepSeekAgent agent;
+    private static TerminalStart agent;
     private static SessionManager sessionManager;
     private static String webUser;
     private static String webPassword;
@@ -32,10 +32,10 @@ public class WebAgent {
     });
 
     public static void main(String[] args) {
-        String apiUrl = ConfigLoader.getConfigString("api_url", "DEEPSEEK_API_URL",
+        String apiUrl = ConfigLoader.getConfigString("cur_api_url", "DEEPSEEK_API_URL",
                 "https://api.deepseek.com/chat/completions");
-        String apiKey = ConfigLoader.getConfigString("api_key", "DEEPSEEK_API_KEY", "");
-        String model = ConfigLoader.getConfigString("model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
+        String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
         webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "admin");
         webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "fish2024");
 
@@ -45,7 +45,7 @@ public class WebAgent {
         }
 
         sessionManager = new SessionManager();
-        agent = new DeepSeekAgent(apiUrl, apiKey, model, sessionManager);
+        agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
         agent.setMode(AgentMode.CONFIRM);
 
         String claudeDir = ConfigLoader.getConfigString("claude_dir", "CLAUDE_DIR", "");
@@ -68,6 +68,8 @@ public class WebAgent {
             server.createContext("/logout", new LogoutHandler());
             server.createContext("/chat", new ChatHandler());
             server.createContext("/mode", new ModeHandler());
+            server.createContext("/model", new ModelHandler());
+            server.createContext("/config", new ConfigHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
             server.createContext("/home", new HomePageHandler());
@@ -269,6 +271,7 @@ public class WebAgent {
             JsonObject req = GSON.fromJson(body, JsonObject.class);
             String message = req.has("message") ? req.get("message").getAsString() : "";
             boolean stream = req.has("stream") && req.get("stream").getAsBoolean();
+            String reqModel = req.has("model") ? req.get("model").getAsString() : null;
 
             if (message.isEmpty()) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"消息不能为空\"}", JsonObject.class), 400);
@@ -279,10 +282,30 @@ public class WebAgent {
                 return;
             }
 
-            if (stream) {
-                handleStream(exchange, message);
-            } else {
-                handleSync(exchange, message);
+            String resolvedApiUrl = null;
+            String resolvedApiKey = null;
+            if (reqModel != null) {
+                JsonObject config = ConfigLoader.loadConfig();
+                if (config.has("models")) {
+                    for (JsonElement el : config.getAsJsonArray("models")) {
+                        JsonObject m = el.getAsJsonObject();
+                        if (reqModel.equals(m.get("value").getAsString())) {
+                            resolvedApiUrl = m.has("api_url") ? m.get("api_url").getAsString() : null;
+                            resolvedApiKey = m.has("api_key") ? m.get("api_key").getAsString() : null;
+                            break;
+                        }
+                    }
+                }
+                TerminalStart.setRequestOverride(reqModel, resolvedApiUrl, resolvedApiKey);
+            }
+            try {
+                if (stream) {
+                    handleStream(exchange, message);
+                } else {
+                    handleSync(exchange, message);
+                }
+            } finally {
+                TerminalStart.clearRequestOverride();
             }
         }
 
@@ -419,6 +442,71 @@ public class WebAgent {
                 result.addProperty("mode", agent.getMode().label());
                 sendJson(exchange, result, 200);
             }
+        }
+    }
+
+    static class ModelHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            String method = exchange.getRequestMethod();
+            if ("GET".equals(method)) {
+                JsonObject result = new JsonObject();
+                result.addProperty("model", agent.getModel());
+                result.addProperty("apiUrl", agent.getApiUrl());
+                sendJson(exchange, result, 200);
+            } else if ("POST".equals(method)) {
+                String body = readBody(exchange);
+                JsonObject req = GSON.fromJson(body, JsonObject.class);
+                if (req.has("model") && !req.get("model").getAsString().isEmpty()) {
+                    agent.setModel(req.get("model").getAsString());
+                }
+                if (req.has("apiUrl") && !req.get("apiUrl").getAsString().isEmpty()) {
+                    agent.setApiUrl(req.get("apiUrl").getAsString());
+                }
+                if (req.has("apiKey") && !req.get("apiKey").getAsString().isEmpty()) {
+                    agent.setApiKey(req.get("apiKey").getAsString());
+                }
+                JsonObject result = new JsonObject();
+                result.addProperty("model", agent.getModel());
+                result.addProperty("apiUrl", agent.getApiUrl());
+                sendJson(exchange, result, 200);
+            }
+        }
+    }
+
+    static class ConfigHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            JsonObject config = ConfigLoader.loadConfig();
+            JsonObject result = new JsonObject();
+            if (config.has("models")) {
+                result.add("models", config.get("models"));
+            } else {
+                result.add("models", new JsonArray());
+            }
+            result.addProperty("model", agent.getModel());
+            result.addProperty("apiUrl", agent.getApiUrl());
+            result.addProperty("apiKey", agent.getApiKey());
+            if (config.has("cur_model")) {
+                result.addProperty("cur_model", config.get("cur_model").getAsString());
+            }
+            sendJson(exchange, result, 200);
         }
     }
 
@@ -579,7 +667,7 @@ public class WebAgent {
         if (Files.exists(devPath)) {
             return Files.readAllBytes(devPath);
         }
-        try (InputStream in = WebAgent.class.getResourceAsStream("/web/" + name)) {
+        try (InputStream in = WebStart.class.getResourceAsStream("/web/" + name)) {
             if (in != null) {
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
                 byte[] tmp = new byte[4096];

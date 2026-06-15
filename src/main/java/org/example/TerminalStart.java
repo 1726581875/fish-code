@@ -14,7 +14,7 @@ import org.jline.terminal.TerminalBuilder;
 
 
 
-public class DeepSeekAgent {
+public class TerminalStart {
 
     private static final Gson GSON = new Gson();
 
@@ -24,9 +24,33 @@ public class DeepSeekAgent {
     private static volatile boolean stopRequested = false;
     private static volatile boolean approveAllRemaining = false;
 
-    private final String apiUrl;
-    private final String apiKey;
-    private final String model;
+    private volatile String apiUrl;
+    private volatile String apiKey;
+    private volatile String model;
+
+    // Per-request model override support
+    private static final java.util.concurrent.ConcurrentHashMap<Long, String> requestModelOverrides = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Long, String[]> requestConnOverrides = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static void setRequestOverride(String model, String apiUrl, String apiKey) {
+        long tid = Thread.currentThread().getId();
+        if (model != null) requestModelOverrides.put(tid, model);
+        if (apiUrl != null || apiKey != null) requestConnOverrides.put(tid, new String[]{apiUrl, apiKey});
+    }
+
+    public static void clearRequestOverride() {
+        long tid = Thread.currentThread().getId();
+        requestModelOverrides.remove(tid);
+        requestConnOverrides.remove(tid);
+    }
+
+    private String getOverrideModel() {
+        return requestModelOverrides.get(Thread.currentThread().getId());
+    }
+
+    private String[] getOverrideConn() {
+        return requestConnOverrides.get(Thread.currentThread().getId());
+    }
     private final List<JsonObject> messages = new ArrayList<>();
     private List<Tool> tools;
     private final Map<String, Tool> toolMap = new HashMap<>();
@@ -44,7 +68,7 @@ public class DeepSeekAgent {
     private JsonArray cachedMessagesJson;
     private boolean messagesDirty = true;
 
-    public DeepSeekAgent(String apiUrl, String apiKey, String model, SessionManager sessionManager) {
+    public TerminalStart(String apiUrl, String apiKey, String model, SessionManager sessionManager) {
         this.apiUrl = apiUrl;
         this.apiKey = apiKey;
         this.model = model;
@@ -52,6 +76,14 @@ public class DeepSeekAgent {
         loadHistory();
         setMode(AgentMode.CONFIRM);
     }
+
+    public String getApiUrl() { return apiUrl; }
+    public String getApiKey() { return apiKey; }
+    public String getModel() { return model; }
+
+    public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
+    public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+    public void setModel(String model) { this.model = model; }
 
     public void setTerminal(Terminal terminal) throws IOException {
         this.terminal = terminal;
@@ -355,7 +387,9 @@ public class DeepSeekAgent {
             toolsJson.add(t.toJson());
         }
         JsonObject body = new JsonObject();
-        body.addProperty("model", model);
+        String overrideModel = getOverrideModel();
+        String effectiveModel = (overrideModel != null) ? overrideModel : model;
+        body.addProperty("model", effectiveModel);
         body.add("messages", getMessagesJson());
         body.add("tools", toolsJson);
         return body;
@@ -391,11 +425,15 @@ public class DeepSeekAgent {
         String jsonBody = GSON.toJson(body);
         trimContextIfNeeded();
 
-        URL url = new URL(apiUrl);
+        String[] connOverride = getOverrideConn();
+        String effectiveApiUrl = (connOverride != null && connOverride[0] != null) ? connOverride[0] : apiUrl;
+        String effectiveApiKey = (connOverride != null && connOverride[1] != null) ? connOverride[1] : apiKey;
+
+        URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
         conn.setDoOutput(true);
         conn.setConnectTimeout(ToolConstants.API_CONNECT_TIMEOUT_MS);
         conn.setReadTimeout(ToolConstants.API_READ_TIMEOUT_MS);
@@ -433,11 +471,15 @@ public class DeepSeekAgent {
 
         String jsonBody = GSON.toJson(body);
 
-        URL url = new URL(apiUrl);
+        String[] connOverride = getOverrideConn();
+        String effectiveApiUrl = (connOverride != null && connOverride[0] != null) ? connOverride[0] : apiUrl;
+        String effectiveApiKey = (connOverride != null && connOverride[1] != null) ? connOverride[1] : apiKey;
+
+        URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+        conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
         conn.setDoOutput(true);
         conn.setConnectTimeout(ToolConstants.API_CONNECT_TIMEOUT_MS);
         conn.setReadTimeout(ToolConstants.API_READ_TIMEOUT_MS);
@@ -690,10 +732,10 @@ public class DeepSeekAgent {
     }
 
     public static void main(String[] args) {
-        String apiUrl = ConfigLoader.getConfigString("api_url", "DEEPSEEK_API_URL",
+        String apiUrl = ConfigLoader.getConfigString("cur_api_url", "DEEPSEEK_API_URL",
                 "https://api.deepseek.com/chat/completions");
-        String apiKey = ConfigLoader.getConfigString("api_key", "DEEPSEEK_API_KEY", "");
-        String model = ConfigLoader.getConfigString("model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
+        String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
 
         if (apiKey.isEmpty()) {
             System.out.println("请配置 api_key (环境变量 DEEPSEEK_API_KEY 或 ~/.fish-code/config.json)");
@@ -701,7 +743,7 @@ public class DeepSeekAgent {
         }
 
         SessionManager sessionManager = new SessionManager();
-        DeepSeekAgent agent = new DeepSeekAgent(apiUrl, apiKey, model, sessionManager);
+        TerminalStart agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
         agent.setMode(AgentMode.CONFIRM);
 
         printBanner(model);
@@ -957,7 +999,7 @@ public class DeepSeekAgent {
         terminal.writer().flush();
     }
 
-    private static void handleResume(DeepSeekAgent agent, SessionManager sessionManager, String input) {
+    private static void handleResume(TerminalStart agent, SessionManager sessionManager, String input) {
         String arg = input.length() > 7 ? input.substring(7).trim() : "";
         if (arg.isEmpty()) {
             String lastId = sessionManager.getLastSessionId();
@@ -980,7 +1022,7 @@ public class DeepSeekAgent {
         }
     }
 
-    private static void handleUndo(DeepSeekAgent agent) {
+    private static void handleUndo(TerminalStart agent) {
         java.io.File workDir = new java.io.File(System.getProperty("user.dir"));
         java.io.File[] bakFiles = workDir.listFiles((dir, name) -> name.endsWith(".bak"));
         if (bakFiles == null || bakFiles.length == 0) {

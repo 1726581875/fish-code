@@ -1,7 +1,21 @@
 {
-  "api_url": "https://api.deepseek.com/chat/completions",
-  "api_key": "",
-  "model": "deepseek-v4-flash",
+  "cur_api_url": "https://api.deepseek.com/chat/completions",
+  "cur_api_key": "",
+  "cur_model": "deepseek-v4-flash",
+  "models": [
+    {
+      "label": "DeepSeek V4 Flash",
+      "value": "deepseek-v4-flash",
+      "api_url": "https://api.deepseek.com/chat/completions",
+      "api_key": ""
+    },
+    {
+      "label": "DeepSeek V4 Pro",
+      "value": "deepseek-v4-pro",
+      "api_url": "https://api.deepseek.com/chat/completions",
+      "api_key": ""
+    }
+  ],
   "web_user": "fish",
-  "web_password": "fish"
+  "web_password": "fish2024"
 }

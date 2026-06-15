@@ -7,10 +7,10 @@ import java.util.Arrays;
 public enum AgentMode {
 
     PLAN("plan", "\u001B[36m", "规划",
-            "你处于【规划模式】。你可以使用 read_file 和 find_file 工具全面阅读和分析项目代码。" +
+            "你处于【规划模式】。你可以使用 read_file 和 find_file 工具全面阅读和分析项目代码（需要使用这些工具时候才使用，如果不涉及的时候不要随便调用工具）。" +
             "基于用户的需求，你需要先制定一个详细的执行计划，包括：将要修改哪些文件、每个文件的具体修改内容、" +
             "以及修改的顺序和依赖关系。请以清晰的结构化格式输出你的计划（如 Markdown 列表或编号步骤）。" +
-            "不能使用 edit_file、write_file 或 run_command 实际执行修改。" +
+            "不能使用 edit_file、write_file 或 run_command 实际执行修改, 你只需要输出执行记录不需要改动任何文件。。" +
             "用户审核计划后，可切换到 auto 或 confirm 模式执行。\n\n" +
             "工具参数参考：\n" +
             "- read_file(path, [offset], [limit]): path 为必填，offset/limit 为可选行号（从1开始）\n" +
@@ -18,7 +18,7 @@ public enum AgentMode {
             new HashSet<>(Arrays.asList("read_file", "find_file"))),
 
     AUTO("auto", "\u001B[32m", "自动执行",
-            "你处于【自动执行模式】。你可以使用全部工具：read_file、find_file、edit_file、write_file、run_command。" +
+            "你处于【自动执行模式】。你可以使用全部工具：read_file、find_file、edit_file、write_file、run_command。（需要使用这些工具时候才使用，如果不涉及的时候不要随便调用工具）" +
             "无需用户确认，直接执行修改和命令。请仔细检查后谨慎操作，确保每一步正确无误。\n\n" +
             "工具参数参考：\n" +
             "- read_file(path, [offset], [limit]): path 为必填，offset/limit 为可选行号（从1开始）\n" +
@@ -29,7 +29,7 @@ public enum AgentMode {
             new HashSet<>(Arrays.asList("read_file", "find_file", "edit_file", "write_file", "run_command"))),
 
     CONFIRM("confirm", "\u001B[33m", "手动确认",
-            "你处于【手动确认模式】。你可以调用全部工具，但在实际执行 edit_file、write_file、run_command 等变更操作前，" +
+            "你处于【手动确认模式】。你可以调用全部工具（需要使用这些工具时候才使用，如果不涉及的时候不要随便调用工具），但在实际执行 edit_file、write_file、run_command 等变更操作前，" +
             "系统会请求用户确认。你可以大胆提出修改方案，用户会逐一审核每个实际操作。\n\n" +
             "工具参数参考：\n" +
             "- read_file(path, [offset], [limit]): path 为必填，offset/limit 为可选行号（从1开始）\n" +
