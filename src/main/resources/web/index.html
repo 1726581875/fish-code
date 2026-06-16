@@ -56,7 +56,7 @@
         .workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         .tab-bar {
             height: 36px; background: var(--bg-white);
-            display: flex; align-items: flex-end;
+            display: flex; align-items: center;
             padding: 0 12px; border-bottom: 1px solid var(--border-color);
         }
         .tab {
@@ -68,6 +68,88 @@
         }
         .tab.active { background: var(--bg-white); color: var(--text-main); border-top: 2px solid var(--accent-blue); font-weight: 500; }
         .tab i { margin-right: 6px; font-size: 12px; }
+        .cwd-wrapper {
+            display: flex; align-items: center; gap: 5px;
+            background: var(--bg-body); border: 1px solid var(--border-color); border-radius: 6px;
+            padding: 0 8px; margin: 0 8px; min-width: 140px; max-width: 320px; height: 24px;
+        }
+        .cwd-wrapper:focus-within { border-color: var(--accent-blue); }
+        .cwd-input {
+            border: none; outline: none; background: transparent;
+            font-size: 12px; color: var(--text-main);
+            font-family: var(--font-mono); padding: 0; width: 100%; height: 100%;
+        }
+        .cwd-input::placeholder { color: var(--text-muted); }
+        .cwd-browse-btn {
+            background: none; border: none; color: var(--text-muted); cursor: pointer;
+            padding: 2px 4px; font-size: 11px; border-radius: 4px; transition: all 0.15s;
+            flex-shrink: 0; display: flex; align-items: center;
+        }
+        .cwd-browse-btn:hover { color: var(--accent-blue); background: var(--bg-gray); }
+        .cwd-picker-overlay {
+            display: none; position: fixed; inset: 0; z-index: 1000;
+            background: rgba(0,0,0,0.4); justify-content: center; align-items: center;
+        }
+        .cwd-picker-overlay.open { display: flex; }
+        .cwd-picker {
+            width: 500px; max-height: 420px; background: var(--bg-white);
+            border: 1px solid var(--border-color); border-radius: 10px;
+            display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+        }
+        .cwd-picker-header {
+            padding: 10px 14px; border-bottom: 1px solid var(--border-light);
+            font-size: 13px; font-weight: 600; color: var(--text-main);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .cwd-picker-breadcrumb {
+            padding: 8px 14px; font-size: 12px; color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-light); background: var(--bg-gray);
+            display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+            font-family: var(--font-mono);
+        }
+        .cwd-picker-breadcrumb span { cursor: pointer; padding: 2px 5px; border-radius: 4px; transition: all 0.1s; }
+        .cwd-picker-breadcrumb span:hover { background: var(--border-light); color: var(--accent-blue); }
+        .cwd-picker-breadcrumb .sep { color: var(--text-muted); cursor: default; padding: 0 1px; }
+        .cwd-picker-breadcrumb .sep:hover { background: none; color: var(--text-muted); }
+        .cwd-picker-list {
+            flex: 1; overflow-y: auto; padding: 6px 0; min-height: 180px;
+        }
+        .cwd-picker-item {
+            padding: 7px 14px; font-size: 13px; color: var(--text-main);
+            cursor: pointer; display: flex; align-items: center; gap: 8px;
+            transition: background 0.1s;
+        }
+        .cwd-picker-item:hover { background: var(--bg-gray); }
+        .cwd-picker-item i { color: var(--accent-blue); font-size: 12px; width: 16px; text-align: center; }
+        .cwd-history-label {
+            font-size: 11px; color: var(--text-muted); padding: 8px 14px 4px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .cwd-history-item i { color: var(--accent-orange) !important; }
+        .cwd-history-path {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+        }
+        .cwd-picker-empty {
+            padding: 30px 14px; text-align: center; color: var(--text-muted); font-size: 13px;
+        }
+        .cwd-picker-footer {
+            padding: 10px 14px; border-top: 1px solid var(--border-light);
+            display: flex; justify-content: flex-end;
+        }
+        .cwd-picker-select-btn {
+            padding: 6px 16px; font-size: 13px; font-weight: 500;
+            background: var(--accent-blue); color: white; border: none;
+            border-radius: 6px; cursor: pointer; transition: background 0.15s;
+        }
+        .cwd-picker-select-btn:hover { background: #0757b5; }
+        .tab-btn {
+            font-size: 12px; padding: 4px 12px; border: 1px solid var(--border-color);
+            border-radius: 6px; background: var(--bg-white); color: var(--text-secondary);
+            cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center;
+            transition: all 0.15s;
+        }
+        .tab-btn:hover { background: var(--bg-gray); color: var(--text-main); }
 
         /* ================= 主内容 ================= */
         .main-content { flex: 1; display: flex; overflow: hidden; }
@@ -211,10 +293,69 @@
             display: flex; justify-content: space-between; align-items: center;
         }
         .panel-content { flex: 1; overflow-y: auto; padding: 10px; }
+        .confirm-msg {
+            max-width: 860px; margin: 0 auto 16px; width: 100%;
+        }
+        .confirm-msg-body {
+            background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
+            padding: 14px 16px;
+        }
+        .confirm-msg-title {
+            font-size: 13px; font-weight: 600; color: var(--accent-orange); margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .confirm-msg-name { font-size: 14px; font-weight: 600; color: var(--text-main); margin-bottom: 4px; }
+        .confirm-msg-args {
+            font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono);
+            background: var(--bg-white); border: 1px solid var(--border-light); border-radius: 6px;
+            padding: 8px 10px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 10px;
+        }
+        .confirm-msg-btns { display: flex; gap: 8px; }
+        .confirm-btn {
+            flex: 1; padding: 6px 0; font-size: 12px; font-weight: 500;
+            border: 1px solid var(--border-color); border-radius: 6px;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .confirm-btn-approve { background: var(--accent-green); color: white; border-color: var(--accent-green); }
+        .confirm-btn-approve:hover { background: #156d30; }
+        .confirm-btn-reject { background: var(--bg-white); color: var(--text-secondary); }
+        .confirm-btn-reject:hover { background: #fef2f2; color: var(--accent-red); border-color: var(--accent-red); }
+        .confirm-btn-approveAll { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
+        .confirm-btn-approveAll:hover { background: #0757b5; }
+        .tool-item {
+            padding: 8px 12px; border-bottom: 1px solid var(--border-light);
+            font-size: 12px;
+        }
+        .tool-item-header { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+        .tool-item-name { font-weight: 600; color: var(--text-main); }
+        .tool-item-status { font-size: 11px; margin-left: auto; }
+        .tool-item-status.running { color: var(--accent-blue); }
+        .tool-item-status.done { color: var(--accent-green); }
+        .tool-item-status.rejected { color: var(--accent-red); }
+        .tool-item-status.confirming { color: var(--accent-orange); }
+        .tool-item-args {
+            font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+            white-space: pre-wrap; max-height: 60px; overflow-y: auto;
+        }
 
         /* ================= 动画 ================= */
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .spinner { animation: spin 1s linear infinite; }
+        .status-indicator {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 12px; color: var(--accent-orange); font-weight: 500;
+            padding: 0 10px; margin-left: 8px;
+        }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-orange);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+        .input-area.disabled { opacity: 0.5; pointer-events: none; }
 
         @media (max-width: 1024px) { .right-panel { display: none; } }
         @media (max-width: 768px) { .sidebar { width: 0; display: none; } }
@@ -233,9 +374,17 @@
 <div class="workspace">
     <div class="tab-bar">
         <div class="tab active"><i class="fas fa-robot"></i> Agent Chat</div>
+        <div id="statusIndicator" class="status-indicator" style="display:none;">
+            <span class="status-dot"></span>执行中
+        </div>
         <div style="flex:1;"></div>
+        <div class="cwd-wrapper">
+            <i class="fas fa-folder-open" style="font-size:11px; color:var(--text-muted);"></i>
+            <input type="text" id="cwdInput" class="cwd-input" placeholder="工作目录" title="当前工作目录" />
+            <button class="cwd-browse-btn" title="选择目录" onclick="openCwdPicker()"><i class="fas fa-folder-tree"></i></button>
+        </div>
         <div style="display:flex; align-items:center; gap:6px; padding-right:4px;">
-            <button class="action-btn" title="新对话" onclick="newSession()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px;">
+            <button class="tab-btn" title="新对话" onclick="newSession()">
                 <i class="fas fa-plus" style="margin-right:4px;"></i>新对话
             </button>
             <button class="action-btn" title="退出登录" onclick="logout()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--accent-red);">
@@ -294,6 +443,14 @@
                 </div>
             </div>
             <div class="panel-header" style="border-top: 1px solid var(--border-color);">
+                <span><i class="fas fa-wrench" style="margin-right:6px;"></i>工具调用</span>
+                <span id="toolCount" style="font-size:11px; color:var(--text-muted);">0</span>
+            </div>
+            <div class="panel-content" id="toolPanel" style="padding:0;">
+                <div id="toolLog"></div>
+                <div id="toolLogEmpty" style="font-size:12px; color:var(--text-muted); padding:10px;">暂无工具调用</div>
+            </div>
+            <div class="panel-header" style="border-top: 1px solid var(--border-color);">
                 <span><i class="fas fa-clock-rotate-left" style="margin-right:6px;"></i>操作日志</span>
             </div>
             <div class="panel-content" id="agentLog">
@@ -319,6 +476,8 @@
     var currentMode = 'confirm';
     var modelsCache = [];
     var selectedModel = '';
+    var currentCwd = '';
+    var toolCallCount = 0;
 
     function authFetch(url, opts) {
         opts = opts || {};
@@ -344,6 +503,67 @@
             }
         }).catch(function () {});
         loadModels();
+        loadCwd();
+    }
+
+    // ==================== 目录历史管理 ====================
+    function getCwdHistory() {
+        try { return JSON.parse(localStorage.getItem('fish_cwd_history') || '[]'); } catch (e) { return []; }
+    }
+
+    function saveCwdToHistory(cwd) {
+        if (!cwd) return;
+        var history = getCwdHistory().filter(function (h) { return h !== cwd; });
+        history.unshift(cwd);
+        if (history.length > 10) history = history.slice(0, 10);
+        localStorage.setItem('fish_cwd_history', JSON.stringify(history));
+    }
+
+    function getLastCwd() {
+        return localStorage.getItem('fish_cwd_last') || '';
+    }
+
+    function saveLastCwd(cwd) {
+        if (cwd) localStorage.setItem('fish_cwd_last', cwd);
+    }
+
+    function loadCwd() {
+        var saved = getLastCwd();
+        if (saved) {
+            currentCwd = saved;
+            document.getElementById('cwdInput').value = currentCwd;
+            authFetch('/cwd', { method: 'POST', body: JSON.stringify({ cwd: currentCwd }) })
+                .then(function (r) { return r.json(); }).then(function (d) {
+                    if (d.cwd) { currentCwd = d.cwd; document.getElementById('cwdInput').value = currentCwd; }
+                }).catch(function () {});
+            return;
+        }
+        authFetch('/cwd').then(function (r) { return r.json(); }).then(function (d) {
+            currentCwd = d.cwd || '';
+            document.getElementById('cwdInput').value = currentCwd;
+            saveLastCwd(currentCwd);
+        }).catch(function () {});
+    }
+
+    function setCwd() {
+        var input = document.getElementById('cwdInput');
+        var newCwd = input.value.trim();
+        if (!newCwd || newCwd === currentCwd) return;
+        authFetch('/cwd', { method: 'POST', body: JSON.stringify({ cwd: newCwd }) })
+            .then(function (r) { return r.json(); }).then(function (d) {
+                if (d.error) {
+                    addAgentLog('目录切换失败', d.error, 'error');
+                    input.value = currentCwd;
+                } else {
+                    currentCwd = d.cwd;
+                    input.value = currentCwd;
+                    saveLastCwd(currentCwd);
+                    saveCwdToHistory(currentCwd);
+                    addAgentLog('工作目录', currentCwd, 'success');
+                }
+            }).catch(function () {
+                input.value = currentCwd;
+            });
     }
 
     function loadModels() {
@@ -381,23 +601,39 @@
     userInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
+    document.getElementById('cwdInput').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); setCwd(); }
+        if (e.key === 'Escape') { this.value = currentCwd; this.blur(); }
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && document.getElementById('cwdPickerOverlay').classList.contains('open')) {
+            closeCwdPicker();
+        }
+    });
 
     // ==================== 发送消息 ====================
     function sendMessage() {
         var text = userInput.value.trim();
         if (!text || isProcessing) return;
         isProcessing = true;
+        setProcessingUI(true);
         addMessage('user', text);
         userInput.value = '';
         userInput.style.height = 'auto';
         terminalPanel.innerHTML = '';
         agentLog.innerHTML = '';
+        document.getElementById('toolLog').innerHTML = '';
+        document.getElementById('toolLogEmpty').style.display = '';
+        document.getElementById('toolCount').textContent = '0';
+        toolCallCount = 0;
+        hideConfirmPanel();
 
         var loader = addThinkingMessage('分析需求，制定执行计划...');
         var msgDiv = null, contentDiv = null, gotFirstToken = false;
 
         var chatPayload = { message: text, stream: true };
         if (selectedModel) chatPayload.model = selectedModel;
+        if (currentCwd) chatPayload.cwd = currentCwd;
 
         authFetch('/chat', { method: 'POST', body: JSON.stringify(chatPayload) })
             .then(function (r) {
@@ -426,9 +662,10 @@
                                     appendStreamToken(contentDiv, evt.content);
                                     scrollToBottom();
                                 } else if (evt.type === 'tool_call') {
-                                    var s = evt.status === 'done' ? '完成' : evt.status === 'confirming' ? '待确认' : '执行中';
-                                    addToolCallBlock(evt.name, evt.args, s);
-                                    addAgentLog(s, evt.name, evt.status === 'done' ? 'success' : 'info');
+                                    addToolToPanel(evt.name, evt.args, evt.status);
+                                    addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name, evt.status === 'done' ? 'success' : 'info');
+                                } else if (evt.type === 'confirm_required') {
+                                    showConfirmPanel(evt.confirmKey, evt.name, evt.args);
                                 } else if (evt.type === 'done') {
                                     if (!msgDiv) { removeThinkingMessage(loader); msgDiv = createAssistantMsg(); contentDiv = msgDiv.querySelector('.msg-body'); }
                                     var raw = contentDiv.getAttribute('data-raw') || contentDiv.textContent;
@@ -451,12 +688,13 @@
                 }
                 return process();
             })
-            .then(function () { isProcessing = false; })
+            .then(function () { isProcessing = false; setProcessingUI(false); })
             .catch(function (err) {
                 removeThinkingMessage(loader);
                 var msg = createAssistantMsg();
                 msg.querySelector('.msg-body').innerHTML = '<span style="color:var(--accent-red);">网络错误: ' + escapeHtml(err.message) + '</span>';
                 isProcessing = false;
+                setProcessingUI(false);
             });
     }
 
@@ -501,17 +739,67 @@
 
     function removeThinkingMessage(el) { if (el) el.remove(); var e = document.getElementById('thinking-msg'); if (e) e.remove(); }
 
-    function addToolCallBlock(name, args, statusLabel) {
-        var div = document.createElement('div'); div.className = 'message';
-        var sc = statusLabel === '完成' ? 'var(--accent-green)' : statusLabel === '待确认' ? 'var(--accent-orange)' : 'var(--accent-blue)';
-        var argsShort = args.length > 200 ? args.substring(0, 200) + '...' : args;
-        div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div><div class="msg-body">' +
-            '<div class="tool-block"><div class="tool-header">' +
-            '<span><i class="fas fa-wrench" style="margin-right:6px;color:var(--accent-green);"></i>' + escapeHtml(name) + '</span>' +
-            '<span style="color:' + sc + ';font-size:11px;">' + statusLabel + '</span></div>' +
-            '<div class="tool-content" style="padding:8px 12px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:pre-wrap;">' +
-            escapeHtml(argsShort) + '</div></div></div>';
-        messagesContainer.appendChild(div); scrollToBottom();
+    function addToolToPanel(name, args, status) {
+        document.getElementById('toolLogEmpty').style.display = 'none';
+        toolCallCount++;
+        document.getElementById('toolCount').textContent = toolCallCount;
+        var statusLabel = status === 'done' ? '完成' : status === 'rejected' ? '已拒绝' : status === 'confirming' ? '待确认' : '执行中';
+        var argsShort = args.length > 120 ? args.substring(0, 120) + '...' : args;
+        var div = document.createElement('div');
+        div.className = 'tool-item';
+        div.id = 'tool-item-' + toolCallCount;
+        div.innerHTML = '<div class="tool-item-header">' +
+            '<i class="fas fa-wrench" style="color:var(--accent-green); font-size:11px;"></i>' +
+            '<span class="tool-item-name">' + escapeHtml(name) + '</span>' +
+            '<span class="tool-item-status ' + status + '">' + statusLabel + '</span></div>' +
+            '<div class="tool-item-args">' + escapeHtml(argsShort) + '</div>';
+        var toolLog = document.getElementById('toolLog');
+        toolLog.appendChild(div);
+        var panel = document.getElementById('toolPanel');
+        panel.scrollTop = panel.scrollHeight;
+    }
+
+    function showConfirmPanel(confirmKey, name, args) {
+        var empty = messagesContainer.querySelector('.welcome-msg');
+        if (empty) empty.remove();
+        var argsShort = args.length > 300 ? args.substring(0, 300) + '...' : args;
+        var div = document.createElement('div');
+        div.className = 'message confirm-msg';
+        div.id = 'confirm-msg';
+        div.innerHTML = '<div class="msg-header agent" style="color:var(--accent-orange);"><i class="fas fa-exclamation-triangle"></i> 需要确认</div>' +
+            '<div class="confirm-msg-body">' +
+            '<div class="confirm-msg-name">' + escapeHtml(name) + '</div>' +
+            '<div class="confirm-msg-args">' + escapeHtml(argsShort) + '</div>' +
+            '<div class="confirm-msg-btns">' +
+            '<button class="confirm-btn confirm-btn-approve" onclick="approveConfirm(\'' + confirmKey + '\', true)">允许</button>' +
+            '<button class="confirm-btn confirm-btn-reject" onclick="approveConfirm(\'' + confirmKey + '\', false)">拒绝</button>' +
+            '<button class="confirm-btn confirm-btn-approveAll" onclick="approveConfirmAll(\'' + confirmKey + '\')">全部允许</button>' +
+            '</div></div>';
+        messagesContainer.appendChild(div);
+        scrollToBottom();
+    }
+
+    function hideConfirmPanel() {
+        var el = document.getElementById('confirm-msg');
+        if (el) el.remove();
+    }
+
+    function approveConfirm(key, approved) {
+        hideConfirmPanel();
+        authFetch('/confirm', { method: 'POST', body: JSON.stringify({ key: key, approved: approved }) })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                addAgentLog(approved ? '已允许' : '已拒绝', '工具确认', approved ? 'success' : 'info');
+            }).catch(function () {});
+    }
+
+    function approveConfirmAll(key) {
+        hideConfirmPanel();
+        authFetch('/confirm', { method: 'POST', body: JSON.stringify({ key: key, approved: true, approveAll: true }) })
+            .then(function (r) { return r.json(); })
+            .then(function () {
+                addAgentLog('全部允许', '工具确认', 'success');
+            }).catch(function () {});
     }
 
     function addAgentLog(title, detail, type) {
@@ -533,6 +821,11 @@
             messagesContainer.innerHTML = '<div class="message welcome-msg"><div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
                 '<div class="msg-body">新会话已创建。请输入你的编程需求。</div></div>';
             terminalPanel.innerHTML = ''; agentLog.innerHTML = '';
+            document.getElementById('toolLog').innerHTML = '';
+            document.getElementById('toolLogEmpty').style.display = '';
+            document.getElementById('toolCount').textContent = '0';
+            toolCallCount = 0;
+            hideConfirmPanel();
             addAgentLog('新会话', '已创建', 'success');
         });
     }
@@ -555,6 +848,133 @@
         status.style.color = 'var(--accent-green)';
         status.textContent = selectedModel;
         addAgentLog('模型切换', selectedModel, 'success');
+    }
+
+    // ==================== 目录选择器 ====================
+    var pickerCurrentPath = '';
+
+    function openCwdPicker() {
+        pickerCurrentPath = currentCwd || '';
+        document.getElementById('cwdPickerOverlay').classList.add('open');
+        var history = getCwdHistory();
+        if (history.length > 0) {
+            loadCwdPickerHistory(history);
+        } else {
+            loadCwdPickerDirs(pickerCurrentPath);
+        }
+    }
+
+    function loadCwdPickerHistory(history) {
+        var listEl = document.getElementById('cwdPickerList');
+        var crumbEl = document.getElementById('cwdPickerBreadcrumb');
+        crumbEl.innerHTML = '<span class="cwd-history-label"><i class="fas fa-clock-rotate-left"></i> 最近使用</span>';
+        var html = '';
+        history.forEach(function (h) {
+            var short = h.length > 50 ? '...' + h.slice(-47) : h;
+            html += '<div class="cwd-picker-item cwd-history-item" onclick="loadCwdPickerDirs(\'' +
+                escapeAttr(h.replace(/\\/g, '\\\\').replace(/'/g, "\\'")) + '\')">' +
+                '<i class="fas fa-folder-open" style="color:var(--accent-orange);"></i>' +
+                '<span class="cwd-history-path" title="' + escapeAttr(h) + '">' + escapeHtml(short) + '</span></div>';
+        });
+        listEl.innerHTML = html;
+        listEl.scrollTop = 0;
+    }
+
+    function closeCwdPicker() {
+        document.getElementById('cwdPickerOverlay').classList.remove('open');
+    }
+
+    function loadCwdPickerDirs(path) {
+        var listEl = document.getElementById('cwdPickerList');
+        var crumbEl = document.getElementById('cwdPickerBreadcrumb');
+        listEl.innerHTML = '<div class="cwd-picker-empty"><i class="fas fa-spinner spinner"></i> 加载中...</div>';
+
+        var url = '/cwd/list?path=' + encodeURIComponent(path || '');
+        authFetch(url).then(function (r) { return r.json(); }).then(function (d) {
+            pickerCurrentPath = d.path || path;
+            renderCwdBreadcrumb(pickerCurrentPath);
+            var dirs = d.dirs || [];
+            if (dirs.length === 0) {
+                listEl.innerHTML = '<div class="cwd-picker-empty">此目录下没有子文件夹</div>';
+                return;
+            }
+            var html = '';
+            dirs.forEach(function (name) {
+                html += '<div class="cwd-picker-item" onclick="loadCwdPickerDirs(\'' +
+                    escapeAttr(pickerCurrentPath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")) + '/' +
+                    escapeAttr(name.replace(/\\/g, '\\\\').replace(/'/g, "\\'")) + '\')">' +
+                    '<i class="fas fa-folder"></i>' + escapeHtml(name) + '</div>';
+            });
+            listEl.innerHTML = html;
+            listEl.scrollTop = 0;
+        }).catch(function () {
+            listEl.innerHTML = '<div class="cwd-picker-empty">加载失败</div>';
+        });
+    }
+
+    function renderCwdBreadcrumb(path) {
+        var parts = path.split(/[/\\]/).filter(Boolean);
+        var el = document.getElementById('cwdPickerBreadcrumb');
+        var html = '';
+        var accumulated = '';
+        if (parts.length > 0 && /^[A-Z]:$/i.test(parts[0])) {
+            accumulated = parts[0] + '\\';
+            html += '<span onclick="loadCwdPickerDirs(\'' + escapeAttr(accumulated.replace(/\\/g, '\\\\').replace(/'/g, "\\'")) + '\')">' + escapeHtml(parts[0]) + '</span>';
+            parts = parts.slice(1);
+        } else if (parts.length > 0 && parts[0] === '') {
+            accumulated = '/';
+            html += '<span onclick="loadCwdPickerDirs(\'/\')">/</span>';
+            parts = parts.slice(1);
+        }
+        parts.forEach(function (p, i) {
+            accumulated += (accumulated.endsWith('/') || accumulated.endsWith('\\') ? '' : (accumulated === '/' ? '' : '/')) + p;
+            var sep = '<span class="sep">/</span>';
+            html += sep + '<span onclick="loadCwdPickerDirs(\'' + escapeAttr(accumulated.replace(/\\/g, '\\\\').replace(/'/g, "\\'")) + '\')">' + escapeHtml(p) + '</span>';
+        });
+        el.innerHTML = html;
+    }
+
+    function confirmCwdPicker() {
+        currentCwd = pickerCurrentPath;
+        document.getElementById('cwdInput').value = currentCwd;
+        saveLastCwd(currentCwd);
+        saveCwdToHistory(currentCwd);
+        closeCwdPicker();
+        authFetch('/cwd', { method: 'POST', body: JSON.stringify({ cwd: currentCwd }) })
+            .then(function (r) { return r.json(); }).then(function (d) {
+                if (d.error) {
+                    addAgentLog('目录切换失败', d.error, 'error');
+                } else {
+                    currentCwd = d.cwd;
+                    document.getElementById('cwdInput').value = currentCwd;
+                    saveLastCwd(currentCwd);
+                    addAgentLog('工作目录', currentCwd, 'success');
+                }
+            }).catch(function () {});
+    }
+
+    function escapeAttr(s) {
+        return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function setProcessingUI(running) {
+        var indicator = document.getElementById('statusIndicator');
+        var inputArea = document.querySelector('.input-area');
+        var sendBtn = document.querySelector('.action-btn.send');
+        if (running) {
+            indicator.style.display = 'inline-flex';
+            inputArea.classList.add('disabled');
+            sendBtn.disabled = true;
+            userInput.disabled = true;
+            userInput.placeholder = 'Agent 执行中，请稍候...';
+        } else {
+            indicator.style.display = 'none';
+            inputArea.classList.remove('disabled');
+            sendBtn.disabled = false;
+            userInput.disabled = false;
+            userInput.placeholder = '输入代码需求... (Enter 发送, Shift+Enter 换行)';
+            userInput.focus();
+        }
     }
 
     // ==================== 工具函数 ====================
@@ -630,5 +1050,19 @@
 
     initApp();
 </script>
+
+<div class="cwd-picker-overlay" id="cwdPickerOverlay" onclick="closeCwdPicker()">
+    <div class="cwd-picker" onclick="event.stopPropagation()">
+        <div class="cwd-picker-header">
+            <span><i class="fas fa-folder-open" style="margin-right:6px;"></i>选择工作目录</span>
+            <button class="action-btn" onclick="closeCwdPicker()" style="font-size:14px;"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="cwd-picker-breadcrumb" id="cwdPickerBreadcrumb"></div>
+        <div class="cwd-picker-list" id="cwdPickerList"></div>
+        <div class="cwd-picker-footer">
+            <button class="cwd-picker-select-btn" onclick="confirmCwdPicker()">选择此目录</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

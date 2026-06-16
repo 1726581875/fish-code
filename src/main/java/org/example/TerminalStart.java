@@ -28,6 +28,43 @@ public class TerminalStart {
     private volatile String apiKey;
     private volatile String model;
 
+    // Per-request working directory - ThreadLocal for tool execution context
+    private static final ThreadLocal<String> currentCwd = new ThreadLocal<>();
+
+    public static void setCurrentCwd(String cwd) { currentCwd.set(cwd); }
+    public static void clearCurrentCwd() { currentCwd.remove(); }
+    public static String getCurrentCwd() {
+        String cwd = currentCwd.get();
+        return cwd != null ? cwd : System.getProperty("user.dir");
+    }
+
+    // Web confirmation mechanism
+    private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<Boolean>> pendingConfirmations = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile int confirmCounter = 0;
+
+    public static String createConfirmationRequest() {
+        String key = "confirm-" + (++confirmCounter);
+        pendingConfirmations.put(key, new java.util.concurrent.CompletableFuture<>());
+        return key;
+    }
+
+    public static boolean resolveConfirmation(String key, boolean approved) {
+        java.util.concurrent.CompletableFuture<Boolean> future = pendingConfirmations.remove(key);
+        if (future != null) {
+            future.complete(approved);
+            return true;
+        }
+        return false;
+    }
+
+    public static void setApproveAllRemaining(boolean approve) {
+        approveAllRemaining = approve;
+    }
+
+    public static boolean isApproveAllRemaining() {
+        return approveAllRemaining;
+    }
+
     // Per-request model override support
     private static final java.util.concurrent.ConcurrentHashMap<Long, String> requestModelOverrides = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.ConcurrentHashMap<Long, String[]> requestConnOverrides = new java.util.concurrent.ConcurrentHashMap<>();
@@ -147,7 +184,7 @@ public class TerminalStart {
 
     private void ensureSession(String firstUserMessage) {
         if (currentSessionId == null) {
-            String cwd = System.getProperty("user.dir");
+            String cwd = getCurrentCwd();
             currentSessionId = sessionManager.createSession(cwd, model);
             String title = SessionManager.generateTitle(firstUserMessage);
             sessionManager.updateTitle(currentSessionId, title);
@@ -286,8 +323,28 @@ public class TerminalStart {
             String callId = toolCall.get("id").getAsString();
 
             if (shouldConfirm(fnName)) {
-                callback.onToolCall(fnName, fnArgs, "confirming");
-                boolean approved = confirmAction(fnName, fnArgs);
+                boolean approved;
+                if (approveAllRemaining) {
+                    approved = true;
+                } else if (terminal == null) {
+                    String confirmKey = createConfirmationRequest();
+                    callback.onConfirmRequired(confirmKey, fnName, fnArgs);
+                    try {
+                        java.util.concurrent.CompletableFuture<Boolean> future = pendingConfirmations.get(confirmKey);
+                        if (future != null) {
+                            approved = future.get(300, java.util.concurrent.TimeUnit.SECONDS);
+                        } else {
+                            approved = false;
+                        }
+                    } catch (Exception e) {
+                        approved = false;
+                    } finally {
+                        pendingConfirmations.remove(confirmKey);
+                    }
+                } else {
+                    callback.onToolCall(fnName, fnArgs, "confirming");
+                    approved = confirmAction(fnName, fnArgs);
+                }
                 if (!approved) {
                     callback.onToolCall(fnName, fnArgs, "rejected");
                     addRejectionMessage(callId);
@@ -862,6 +919,7 @@ public class TerminalStart {
                         }
                         @Override public void onThinking(String text) {}
                         @Override public void onToolCall(String fnName, String fnArgs, String status) {}
+                        @Override public void onConfirmRequired(String confirmKey, String fnName, String fnArgs) {}
                         @Override public void onComplete(ChatResult result) {}
                         @Override public void onError(String error) {
                             System.out.print(error);
@@ -1023,7 +1081,7 @@ public class TerminalStart {
     }
 
     private static void handleUndo(TerminalStart agent) {
-        java.io.File workDir = new java.io.File(System.getProperty("user.dir"));
+        java.io.File workDir = new java.io.File(getCurrentCwd());
         java.io.File[] bakFiles = workDir.listFiles((dir, name) -> name.endsWith(".bak"));
         if (bakFiles == null || bakFiles.length == 0) {
             System.out.println("  \u001B[33m没有可恢复的文件编辑（未找到 .bak 备份文件）\u001B[0m");

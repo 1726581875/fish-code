@@ -1,5 +1,7 @@
 package org.example.tool;
 
+import org.example.TerminalStart;
+
 import java.util.*;
 
 public final class DiffUtils {
@@ -244,7 +246,7 @@ public final class DiffUtils {
     }
 
     private static String shortenPath(String path) {
-        String userDir = System.getProperty("user.dir");
+        String userDir = TerminalStart.getCurrentCwd();
         if (path.startsWith(userDir)) {
             String rel = path.substring(userDir.length());
             if (rel.startsWith(java.io.File.separator)) {

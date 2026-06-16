@@ -1,5 +1,7 @@
 package org.example.tool;
 
+import org.example.TerminalStart;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -12,7 +14,7 @@ public final class ToolUtils {
     public static File resolveFile(String path) {
         File file = new File(path);
         if (!file.isAbsolute()) {
-            file = new File(System.getProperty("user.dir"), path);
+            file = new File(TerminalStart.getCurrentCwd(), path);
         }
         return file;
     }
@@ -21,7 +23,7 @@ public final class ToolUtils {
         File file = resolveFile(path);
         try {
             String canonicalPath = file.getCanonicalPath();
-            String projectRoot = new File(System.getProperty("user.dir")).getCanonicalPath();
+            String projectRoot = new File(TerminalStart.getCurrentCwd()).getCanonicalPath();
             String normalizedProject = projectRoot.endsWith(File.separator)
                     ? projectRoot : projectRoot + File.separator;
             String normalizedFile = canonicalPath.endsWith(File.separator)
@@ -39,7 +41,7 @@ public final class ToolUtils {
     public static List<String> searchFiles(String name, boolean useGlob) {
         List<String> results = new ArrayList<>();
         String lowerName = name.toLowerCase();
-        File root = new File(System.getProperty("user.dir"));
+        File root = new File(TerminalStart.getCurrentCwd());
         java.util.Set<String> seenDirs = new java.util.HashSet<>();
         searchDir(root, root.getAbsolutePath(), lowerName, useGlob, results, 0, seenDirs);
         return results;

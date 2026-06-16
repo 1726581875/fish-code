@@ -69,6 +69,9 @@ public class WebStart {
             server.createContext("/chat", new ChatHandler());
             server.createContext("/mode", new ModeHandler());
             server.createContext("/model", new ModelHandler());
+            server.createContext("/cwd", new CwdHandler());
+            server.createContext("/cwd/list", new CwdListHandler());
+            server.createContext("/confirm", new ConfirmHandler());
             server.createContext("/config", new ConfigHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
@@ -272,6 +275,7 @@ public class WebStart {
             String message = req.has("message") ? req.get("message").getAsString() : "";
             boolean stream = req.has("stream") && req.get("stream").getAsBoolean();
             String reqModel = req.has("model") ? req.get("model").getAsString() : null;
+            String reqCwd = req.has("cwd") ? req.get("cwd").getAsString() : null;
 
             if (message.isEmpty()) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"消息不能为空\"}", JsonObject.class), 400);
@@ -298,6 +302,10 @@ public class WebStart {
                 }
                 TerminalStart.setRequestOverride(reqModel, resolvedApiUrl, resolvedApiKey);
             }
+            if (reqCwd != null && !reqCwd.isEmpty()) {
+                TerminalStart.setCurrentCwd(reqCwd);
+            }
+            TerminalStart.setApproveAllRemaining(false);
             try {
                 if (stream) {
                     handleStream(exchange, message);
@@ -306,6 +314,7 @@ public class WebStart {
                 }
             } finally {
                 TerminalStart.clearRequestOverride();
+                TerminalStart.clearCurrentCwd();
             }
         }
 
@@ -343,6 +352,20 @@ public class WebStart {
                             evt.addProperty("name", fnName);
                             evt.addProperty("args", fnArgs);
                             evt.addProperty("status", status);
+                            String data = "data: " + GSON.toJson(evt) + "\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+
+                    @Override
+                    public void onConfirmRequired(String confirmKey, String fnName, String fnArgs) {
+                        try {
+                            JsonObject evt = new JsonObject();
+                            evt.addProperty("type", "confirm_required");
+                            evt.addProperty("confirmKey", confirmKey);
+                            evt.addProperty("name", fnName);
+                            evt.addProperty("args", fnArgs);
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
@@ -506,6 +529,134 @@ public class WebStart {
             if (config.has("cur_model")) {
                 result.addProperty("cur_model", config.get("cur_model").getAsString());
             }
+            sendJson(exchange, result, 200);
+        }
+    }
+
+    static class CwdHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            String method = exchange.getRequestMethod();
+            if ("GET".equals(method)) {
+                JsonObject result = new JsonObject();
+                result.addProperty("cwd", TerminalStart.getCurrentCwd());
+                sendJson(exchange, result, 200);
+            } else if ("POST".equals(method)) {
+                String body = readBody(exchange);
+                JsonObject req = GSON.fromJson(body, JsonObject.class);
+                String newCwd = req.has("cwd") ? req.get("cwd").getAsString() : "";
+                if (newCwd.isEmpty()) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"cwd不能为空\"}", JsonObject.class), 400);
+                    return;
+                }
+                if (newCwd.matches("^[A-Za-z]:$")) {
+                    newCwd = newCwd + "\\";
+                }
+                java.io.File dir = new java.io.File(newCwd);
+                if (!dir.exists() || !dir.isDirectory()) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在: " + newCwd + "\"}", JsonObject.class), 400);
+                    return;
+                }
+                JsonObject result = new JsonObject();
+                result.addProperty("cwd", dir.getAbsolutePath());
+                sendJson(exchange, result, 200);
+            }
+        }
+    }
+
+    static class CwdListHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            String query = exchange.getRequestURI().getQuery();
+            String path = "";
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    String[] kv = param.split("=", 2);
+                    if (kv.length == 2 && "path".equals(kv[0])) {
+                        path = java.net.URLDecoder.decode(kv[1], "UTF-8");
+                        break;
+                    }
+                }
+            }
+            if (path.isEmpty()) {
+                path = TerminalStart.getCurrentCwd();
+            }
+            if (path.matches("^[A-Za-z]:$")) {
+                path = path + "\\";
+            }
+            java.io.File dir = new java.io.File(path);
+            if (!dir.exists() || !dir.isDirectory()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在\"}", JsonObject.class), 400);
+                return;
+            }
+            JsonObject result = new JsonObject();
+            result.addProperty("path", dir.getAbsolutePath());
+            JsonArray dirs = new JsonArray();
+            java.io.File[] files = dir.listFiles();
+            if (files != null) {
+                for (java.io.File f : files) {
+                    if (f.isDirectory() && !f.getName().startsWith(".")) {
+                        dirs.add(f.getName());
+                    }
+                }
+            }
+            result.add("dirs", dirs);
+            sendJson(exchange, result, 200);
+        }
+    }
+
+    static class ConfirmHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            String body = readBody(exchange);
+            JsonObject req = GSON.fromJson(body, JsonObject.class);
+            String key = req.has("key") ? req.get("key").getAsString() : "";
+            boolean approved = req.has("approved") && req.get("approved").getAsBoolean();
+            boolean approveAll = req.has("approveAll") && req.get("approveAll").getAsBoolean();
+            if (key.isEmpty()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"key不能为空\"}", JsonObject.class), 400);
+                return;
+            }
+            if (approveAll) {
+                TerminalStart.setApproveAllRemaining(true);
+            }
+            boolean resolved = TerminalStart.resolveConfirmation(key, approved);
+            JsonObject result = new JsonObject();
+            result.addProperty("ok", resolved);
             sendJson(exchange, result, 200);
         }
     }

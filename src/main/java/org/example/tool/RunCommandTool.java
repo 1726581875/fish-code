@@ -1,6 +1,8 @@
 package org.example.tool;
 
 import com.google.gson.*;
+import org.example.TerminalStart;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
@@ -51,7 +53,7 @@ public class RunCommandTool extends Tool {
             pb = new ProcessBuilder("sh", "-c", command);
         }
         pb.redirectErrorStream(true);
-        pb.directory(new java.io.File(System.getProperty("user.dir")));
+        pb.directory(new java.io.File(TerminalStart.getCurrentCwd()));
         Process process = pb.start();
 
         StringBuilder output = new StringBuilder();
