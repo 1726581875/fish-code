@@ -94,6 +94,7 @@ public class TerminalStart {
     private AgentMode currentMode;
     private Terminal terminal;
     private Reader terminalReader;
+    private ActionConfirmer actionConfirmer;
     private final SessionManager sessionManager;
     private String currentSessionId;
     private final List<String> inputHistory = new ArrayList<>();
@@ -117,10 +118,28 @@ public class TerminalStart {
     public String getApiUrl() { return apiUrl; }
     public String getApiKey() { return apiKey; }
     public String getModel() { return model; }
+    public String getWorkspaceDir() { return System.getProperty("user.dir"); }
 
     public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
     public void setModel(String model) { this.model = model; }
+
+    public String setWorkspaceDir(String path) throws IOException {
+        if (path == null || path.trim().isEmpty()) {
+            throw new IOException("工作目录不能为空");
+        }
+        File dir = ToolUtils.resolveFile(path.trim());
+        String canonical = dir.getCanonicalPath();
+        File canonicalDir = new File(canonical);
+        if (!canonicalDir.exists()) {
+            throw new IOException("工作目录不存在: " + canonical);
+        }
+        if (!canonicalDir.isDirectory()) {
+            throw new IOException("不是目录: " + canonical);
+        }
+        System.setProperty("user.dir", canonical);
+        return canonical;
+    }
 
     public void setTerminal(Terminal terminal) throws IOException {
         this.terminal = terminal;
@@ -129,6 +148,14 @@ public class TerminalStart {
 
     public Terminal getTerminal() {
         return terminal;
+    }
+
+    public interface ActionConfirmer {
+        boolean confirm(String fnName, String fnArgs) throws IOException;
+    }
+
+    public void setActionConfirmer(ActionConfirmer actionConfirmer) {
+        this.actionConfirmer = actionConfirmer;
     }
 
     public void setMode(AgentMode mode) {
@@ -474,13 +501,13 @@ public class TerminalStart {
     }
 
     private JsonObject callApi(boolean stream) throws IOException {
+        trimContextIfNeeded();
         JsonObject body = getToolsJson();
         if (stream) {
             body.addProperty("stream", true);
         }
 
         String jsonBody = GSON.toJson(body);
-        trimContextIfNeeded();
 
         String[] connOverride = getOverrideConn();
         String effectiveApiUrl = (connOverride != null && connOverride[0] != null) ? connOverride[0] : apiUrl;
@@ -522,9 +549,9 @@ public class TerminalStart {
     }
 
     private JsonObject callApiStreaming(StreamCallback callback) throws IOException {
+        trimContextIfNeeded();
         JsonObject body = getToolsJson();
         body.addProperty("stream", true);
-        trimContextIfNeeded();
 
         String jsonBody = GSON.toJson(body);
 
@@ -726,8 +753,12 @@ public class TerminalStart {
     }
 
     private boolean confirmAction(String fnName, String fnArgs) throws IOException {
+        ActionConfirmer confirmer = actionConfirmer;
+        if (confirmer != null) {
+            return confirmer.confirm(fnName, fnArgs);
+        }
         if (terminal == null) {
-            return true;
+            return false;
         }
         if (approveAllRemaining) {
             return true;
@@ -793,6 +824,9 @@ public class TerminalStart {
                 "https://api.deepseek.com/chat/completions");
         String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
         String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String workspaceDir = args.length > 0
+                ? args[0]
+                : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
 
         if (apiKey.isEmpty()) {
             System.out.println("请配置 api_key (环境变量 DEEPSEEK_API_KEY 或 ~/.fish-code/config.json)");
@@ -802,9 +836,15 @@ public class TerminalStart {
         SessionManager sessionManager = new SessionManager();
         TerminalStart agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
         agent.setMode(AgentMode.CONFIRM);
+        try {
+            agent.setWorkspaceDir(workspaceDir);
+        } catch (IOException e) {
+            System.out.println("工作目录配置无效，继续使用当前目录: " + System.getProperty("user.dir"));
+            System.out.println("原因: " + e.getMessage());
+        }
 
         printBanner(model);
-        System.out.println("  " + modeStatusBar(AgentMode.CONFIRM) + "  Shift+Tab 切换 | /help 帮助 | exit 退出\n");
+        System.out.println("  " + modeStatusBar(AgentMode.CONFIRM) + "  Shift+Tab 切换 | /cwd 切换目录 | /help 帮助 | exit 退出\n");
 
         Terminal terminal = null;
         try {
@@ -865,12 +905,17 @@ public class TerminalStart {
                     printSessionHistory(sessionManager);
                     continue;
                 }
+                if (input.startsWith("/cwd")) {
+                    handleWorkspaceCommand(agent, input);
+                    continue;
+                }
                 if (input.startsWith("/status")) {
                     int msgCount = agent.messages.size();
                     int chars = agent.estimateTokens() * 3;
                     int tokens = agent.estimateTokens();
                     String sid = agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "(无)";
                     System.out.println("  \u001B[36m会话: " + sid);
+                    System.out.println("  工作目录: " + agent.getWorkspaceDir());
                     System.out.println("  消息数: " + msgCount + "  |  上下文: " + chars + " 字符 (~" + tokens + " tokens)");
                     System.out.println("  模式: " + agent.getMode().label() + "\u001B[0m");
                     continue;
@@ -1080,6 +1125,23 @@ public class TerminalStart {
         }
     }
 
+    private static void handleWorkspaceCommand(TerminalStart agent, String input) {
+        String arg = input.length() > 4 ? input.substring(4).trim() : "";
+        if (arg.isEmpty()) {
+            System.out.println("  \u001B[36m当前工作目录: " + agent.getWorkspaceDir() + "\u001B[0m");
+            System.out.println("  \u001B[90m用法: /cwd <目录路径>\u001B[0m");
+            return;
+        }
+        try {
+            String cwd = agent.setWorkspaceDir(arg);
+            agent.newConversation();
+            System.out.println("  \u001B[36m已切换工作目录: " + cwd + "\u001B[0m");
+            System.out.println("  \u001B[90m已为新目录创建空白会话上下文\u001B[0m");
+        } catch (IOException e) {
+            System.out.println("  \u001B[31m切换失败: " + e.getMessage() + "\u001B[0m");
+        }
+    }
+
     private static void handleUndo(TerminalStart agent) {
         java.io.File workDir = new java.io.File(getCurrentCwd());
         java.io.File[] bakFiles = workDir.listFiles((dir, name) -> name.endsWith(".bak"));
@@ -1143,6 +1205,8 @@ public class TerminalStart {
         System.out.println("    /new         - 新建空白会话");
         System.out.println("    /clear       - 清空当前会话上下文");
         System.out.println("    /status      - 查看当前会话状态");
+        System.out.println("    /cwd         - 查看当前工作目录");
+        System.out.println("    /cwd <path>  - 切换工作目录并开启新上下文");
         System.out.println("    /history     - 查看历史会话列表");
         System.out.println("    /resume      - 恢复上一个会话");
         System.out.println("    /resume <id> - 恢复指定会话");

@@ -24,6 +24,7 @@ public class WebStart {
     private static String webPassword;
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
+    private static final Object agentLock = new Object();
     private static ClaudeHistoryReader claudeReader;
     private static final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "token-cleanup");
@@ -36,6 +37,9 @@ public class WebStart {
                 "https://api.deepseek.com/chat/completions");
         String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
         String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String workspaceDir = args.length > 0
+                ? args[0]
+                : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
         webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "admin");
         webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "fish2024");
 
@@ -47,6 +51,12 @@ public class WebStart {
         sessionManager = new SessionManager();
         agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
         agent.setMode(AgentMode.CONFIRM);
+        try {
+            agent.setWorkspaceDir(workspaceDir);
+        } catch (IOException e) {
+            System.out.println("工作目录配置无效，继续使用当前目录: " + System.getProperty("user.dir"));
+            System.out.println("原因: " + e.getMessage());
+        }
 
         String claudeDir = ConfigLoader.getConfigString("claude_dir", "CLAUDE_DIR", "");
         claudeReader = new ClaudeHistoryReader(claudeDir);
@@ -400,7 +410,9 @@ public class WebStart {
                         } catch (IOException ignored) {}
                     }
                 };
-                agent.chatStream(message, sseCallback);
+                synchronized (agentLock) {
+                    agent.chatStream(message, sseCallback);
+                }
             } catch (Exception e) {
                 JsonObject errorEvent = new JsonObject();
                 errorEvent.addProperty("type", "error");
@@ -418,7 +430,10 @@ public class WebStart {
         private void handleSync(HttpExchange exchange, String message) throws IOException {
             JsonObject result = new JsonObject();
             try {
-                ChatResult chatResult = agent.chat(message);
+                ChatResult chatResult;
+                synchronized (agentLock) {
+                    chatResult = agent.chat(message);
+                }
                 result.addProperty("reply", chatResult.getReply() != null ? chatResult.getReply() : "");
                 result.addProperty("durationMs", chatResult.getDurationMs());
                 result.addProperty("contextTokens", chatResult.getContextTokens());
@@ -505,6 +520,49 @@ public class WebStart {
         }
     }
 
+    static class WorkspaceHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+
+            String method = exchange.getRequestMethod();
+            if ("GET".equals(method)) {
+                JsonObject result = new JsonObject();
+                result.addProperty("workspaceDir", agent.getWorkspaceDir());
+                sendJson(exchange, result, 200);
+            } else if ("POST".equals(method)) {
+                String body = readBody(exchange);
+                JsonObject req = GSON.fromJson(body, JsonObject.class);
+                String path = req.has("path") ? req.get("path").getAsString() : "";
+                try {
+                    String cwd;
+                    synchronized (agentLock) {
+                        cwd = agent.setWorkspaceDir(path);
+                        agent.newConversation();
+                    }
+                    JsonObject result = new JsonObject();
+                    result.addProperty("success", true);
+                    result.addProperty("workspaceDir", cwd);
+                    sendJson(exchange, result, 200);
+                } catch (IOException e) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("error", e.getMessage());
+                    sendJson(exchange, result, 400);
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+            }
+        }
+    }
+
     static class ConfigHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -519,13 +577,30 @@ public class WebStart {
             JsonObject config = ConfigLoader.loadConfig();
             JsonObject result = new JsonObject();
             if (config.has("models")) {
-                result.add("models", config.get("models"));
+                JsonArray safeModels = new JsonArray();
+                for (JsonElement el : config.getAsJsonArray("models")) {
+                    JsonObject source = el.getAsJsonObject();
+                    JsonObject model = new JsonObject();
+                    for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
+                        String key = entry.getKey();
+                        if ("api_key".equals(key) || "apiKey".equals(key)) {
+                            model.addProperty("apiKeyConfigured",
+                                    !entry.getValue().isJsonNull()
+                                            && !entry.getValue().getAsString().isEmpty());
+                        } else {
+                            model.add(key, entry.getValue());
+                        }
+                    }
+                    safeModels.add(model);
+                }
+                result.add("models", safeModels);
             } else {
                 result.add("models", new JsonArray());
             }
             result.addProperty("model", agent.getModel());
             result.addProperty("apiUrl", agent.getApiUrl());
-            result.addProperty("apiKey", agent.getApiKey());
+            result.addProperty("workspaceDir", agent.getWorkspaceDir());
+            result.addProperty("apiKeyConfigured", agent.getApiKey() != null && !agent.getApiKey().isEmpty());
             if (config.has("cur_model")) {
                 result.addProperty("cur_model", config.get("cur_model").getAsString());
             }
@@ -566,7 +641,18 @@ public class WebStart {
                     return;
                 }
                 JsonObject result = new JsonObject();
-                result.addProperty("cwd", dir.getAbsolutePath());
+                try {
+                    String cwd;
+                    synchronized (agentLock) {
+                        cwd = agent.setWorkspaceDir(dir.getAbsolutePath());
+                        agent.newConversation();
+                    }
+                    result.addProperty("cwd", cwd);
+                } catch (IOException e) {
+                    result.addProperty("error", e.getMessage());
+                    sendJson(exchange, result, 400);
+                    return;
+                }
                 sendJson(exchange, result, 200);
             }
         }
