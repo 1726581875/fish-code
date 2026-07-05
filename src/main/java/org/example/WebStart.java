@@ -83,6 +83,7 @@ public class WebStart {
             server.createContext("/cwd/list", new CwdListHandler());
             server.createContext("/project/tree", new ProjectTreeHandler());
             server.createContext("/confirm", new ConfirmHandler());
+            server.createContext("/cancel", new CancelHandler());
             server.createContext("/config", new ConfigHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
@@ -317,6 +318,7 @@ public class WebStart {
                 TerminalStart.setCurrentCwd(reqCwd);
             }
             TerminalStart.setApproveAllRemaining(false);
+            TerminalStart.resetStopRequest();
             try {
                 if (stream) {
                     handleStream(exchange, message);
@@ -326,6 +328,7 @@ public class WebStart {
             } finally {
                 TerminalStart.clearRequestOverride();
                 TerminalStart.clearCurrentCwd();
+                TerminalStart.resetStopRequest();
             }
         }
 
@@ -842,6 +845,29 @@ public class WebStart {
         }
     }
 
+    static class CancelHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            TerminalStart.requestStop();
+            JsonObject result = new JsonObject();
+            result.addProperty("success", true);
+            sendJson(exchange, result, 200);
+        }
+    }
+
     static class SessionsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -921,6 +947,22 @@ public class WebStart {
                     JsonObject result = new JsonObject();
                     result.addProperty("success", true);
                     result.addProperty("message", "已删除会话 " + sessionId);
+                    sendJson(exchange, result, 200);
+                } else if ("rename".equals(action)) {
+                    String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                    String title = req.has("title") ? req.get("title").getAsString().trim() : "";
+                    if (sessionId.isEmpty()) {
+                        sendJson(exchange, GSON.fromJson("{\"error\":\"缺少sessionId\"}", JsonObject.class), 400);
+                        return;
+                    }
+                    if (title.isEmpty()) {
+                        sendJson(exchange, GSON.fromJson("{\"error\":\"标题不能为空\"}", JsonObject.class), 400);
+                        return;
+                    }
+                    sessionManager.updateTitle(sessionId, title);
+                    JsonObject result = new JsonObject();
+                    result.addProperty("success", true);
+                    result.addProperty("message", "已重命名会话");
                     sendJson(exchange, result, 200);
                 } else {
                     sendJson(exchange, GSON.fromJson("{\"error\":\"未知操作\"}", JsonObject.class), 400);

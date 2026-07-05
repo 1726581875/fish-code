@@ -23,6 +23,7 @@ public class TerminalStart {
 
     private static volatile boolean stopRequested = false;
     private static volatile boolean approveAllRemaining = false;
+    private static volatile HttpURLConnection activeConnection = null;
 
     private volatile String apiUrl;
     private volatile String apiKey;
@@ -63,6 +64,27 @@ public class TerminalStart {
 
     public static boolean isApproveAllRemaining() {
         return approveAllRemaining;
+    }
+
+    public static void resetStopRequest() {
+        stopRequested = false;
+    }
+
+    public static void requestStop() {
+        stopRequested = true;
+        approveAllRemaining = false;
+        HttpURLConnection conn = activeConnection;
+        if (conn != null) {
+            conn.disconnect();
+        }
+        for (java.util.concurrent.CompletableFuture<Boolean> future : pendingConfirmations.values()) {
+            future.complete(false);
+        }
+        pendingConfirmations.clear();
+    }
+
+    public static boolean isStopRequested() {
+        return stopRequested;
     }
 
     // Per-request model override support
@@ -285,6 +307,11 @@ public class TerminalStart {
             }
 
             message = callApiStreaming(callback);
+            if (stopRequested) {
+                ChatResult result = new ChatResult("(对话已被用户终止)", System.currentTimeMillis() - startTime, estimateTokens());
+                callback.onComplete(result);
+                return result;
+            }
             messages.add(message);
             persistMessage(message);
 
@@ -324,6 +351,7 @@ public class TerminalStart {
     // === TOOL CALL PROCESSING ===
     private void processToolCalls(JsonArray toolCalls) throws IOException {
         for (JsonElement tc : toolCalls) {
+            if (stopRequested) return;
             JsonObject toolCall = tc.getAsJsonObject();
             String fnName = toolCall.getAsJsonObject("function").get("name").getAsString();
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
@@ -336,6 +364,7 @@ public class TerminalStart {
                     continue;
                 }
             }
+            if (stopRequested) return;
 
             System.out.println("[调用工具] " + fnName + "(" + fnArgs + ")");
             executeAndAddToolResult(fnName, fnArgs, callId);
@@ -344,6 +373,7 @@ public class TerminalStart {
 
     private void processToolCallsStreaming(JsonArray toolCalls, StreamCallback callback) throws IOException {
         for (JsonElement tc : toolCalls) {
+            if (stopRequested) return;
             JsonObject toolCall = tc.getAsJsonObject();
             String fnName = toolCall.getAsJsonObject("function").get("name").getAsString();
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
@@ -378,6 +408,7 @@ public class TerminalStart {
                     continue;
                 }
             }
+            if (stopRequested) return;
 
             callback.onToolCall(fnName, fnArgs, "running");
             System.out.println("\n[调用工具] " + fnName + "(" + fnArgs + ")");
@@ -515,6 +546,7 @@ public class TerminalStart {
 
         URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        activeConnection = conn;
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
@@ -542,10 +574,15 @@ public class TerminalStart {
         }
 
         if (statusCode != 200) {
+            if (activeConnection == conn) activeConnection = null;
             throw new IOException("API error [" + statusCode + "]: " + truncateError(responseBody));
         }
 
-        return GSON.fromJson(responseBody.trim(), JsonObject.class);
+        try {
+            return GSON.fromJson(responseBody.trim(), JsonObject.class);
+        } finally {
+            if (activeConnection == conn) activeConnection = null;
+        }
     }
 
     private JsonObject callApiStreaming(StreamCallback callback) throws IOException {
@@ -561,6 +598,7 @@ public class TerminalStart {
 
         URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        activeConnection = conn;
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
@@ -585,6 +623,7 @@ public class TerminalStart {
                 while ((line = br.readLine()) != null) sb.append(line);
                 errorBody = sb.toString();
             }
+            if (activeConnection == conn) activeConnection = null;
             throw new IOException("API error [" + statusCode + "]: " + truncateError(errorBody));
         }
 
@@ -596,6 +635,9 @@ public class TerminalStart {
             String line;
             int emptyLineCount = 0;
             while ((line = br.readLine()) != null) {
+                if (stopRequested) {
+                    break;
+                }
                 if (line.isEmpty()) {
                     emptyLineCount++;
                     if (emptyLineCount > 10) break;
@@ -644,6 +686,12 @@ public class TerminalStart {
                     accumulateToolCallsDelta(toolCallsMap, tcArray);
                 }
             }
+        } catch (IOException e) {
+            if (!stopRequested) {
+                throw e;
+            }
+        } finally {
+            if (activeConnection == conn) activeConnection = null;
         }
 
         if (fullContent.length() == 0 && fullThinking.length() > 0) {
