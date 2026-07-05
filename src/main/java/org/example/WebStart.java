@@ -81,6 +81,7 @@ public class WebStart {
             server.createContext("/model", new ModelHandler());
             server.createContext("/cwd", new CwdHandler());
             server.createContext("/cwd/list", new CwdListHandler());
+            server.createContext("/project/tree", new ProjectTreeHandler());
             server.createContext("/confirm", new ConfirmHandler());
             server.createContext("/config", new ConfigHandler());
             server.createContext("/sessions", new SessionsHandler());
@@ -644,8 +645,11 @@ public class WebStart {
                 try {
                     String cwd;
                     synchronized (agentLock) {
+                        String before = agent.getWorkspaceDir();
                         cwd = agent.setWorkspaceDir(dir.getAbsolutePath());
-                        agent.newConversation();
+                        if (!before.equals(cwd)) {
+                            agent.newConversation();
+                        }
                     }
                     result.addProperty("cwd", cwd);
                 } catch (IOException e) {
@@ -709,6 +713,97 @@ public class WebStart {
             }
             result.add("dirs", dirs);
             sendJson(exchange, result, 200);
+        }
+    }
+
+    static class ProjectTreeHandler implements HttpHandler {
+        private static final int MAX_ITEMS = 300;
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+
+            String relPath = queryParam(exchange, "path");
+            File root = new File(agent.getWorkspaceDir()).getCanonicalFile();
+            File dir = relPath == null || relPath.isEmpty()
+                    ? root
+                    : new File(root, relPath).getCanonicalFile();
+
+            if (!isInside(root, dir) || !dir.exists() || !dir.isDirectory()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在或越界\"}", JsonObject.class), 400);
+                return;
+            }
+
+            JsonObject result = new JsonObject();
+            result.addProperty("root", root.getAbsolutePath());
+            result.addProperty("path", relativize(root, dir));
+            JsonArray items = new JsonArray();
+            File[] files = dir.listFiles();
+            if (files != null) {
+                Arrays.sort(files, (a, b) -> {
+                    if (a.isDirectory() != b.isDirectory()) {
+                        return a.isDirectory() ? -1 : 1;
+                    }
+                    return a.getName().compareToIgnoreCase(b.getName());
+                });
+                int count = 0;
+                for (File f : files) {
+                    if (count >= MAX_ITEMS) break;
+                    String name = f.getName();
+                    if (shouldHideProjectItem(name)) continue;
+                    JsonObject item = new JsonObject();
+                    item.addProperty("name", name);
+                    item.addProperty("path", relativize(root, f.getCanonicalFile()));
+                    item.addProperty("type", f.isDirectory() ? "dir" : "file");
+                    items.add(item);
+                    count++;
+                }
+            }
+            result.add("items", items);
+            sendJson(exchange, result, 200);
+        }
+
+        private static String queryParam(HttpExchange exchange, String name) throws UnsupportedEncodingException {
+            String query = exchange.getRequestURI().getQuery();
+            if (query == null) return "";
+            for (String param : query.split("&")) {
+                String[] kv = param.split("=", 2);
+                if (kv.length == 2 && name.equals(kv[0])) {
+                    return java.net.URLDecoder.decode(kv[1], "UTF-8");
+                }
+            }
+            return "";
+        }
+
+        private static boolean isInside(File root, File file) throws IOException {
+            String rootPath = root.getCanonicalPath();
+            String filePath = file.getCanonicalPath();
+            return filePath.equals(rootPath) || filePath.startsWith(rootPath + File.separator);
+        }
+
+        private static String relativize(File root, File file) {
+            Path rootPath = root.toPath();
+            Path filePath = file.toPath();
+            if (rootPath.equals(filePath)) return "";
+            return rootPath.relativize(filePath).toString().replace(File.separatorChar, '/');
+        }
+
+        private static boolean shouldHideProjectItem(String name) {
+            return ".git".equals(name) || "target".equals(name) || "node_modules".equals(name)
+                    || ".idea".equals(name) || ".svn".equals(name) || "__pycache__".equals(name)
+                    || name.endsWith(".bak");
         }
     }
 
@@ -781,10 +876,28 @@ public class WebStart {
                     sendJson(exchange, result, 200);
                 } else if ("resume".equals(action)) {
                     String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                    if (req.has("cwd") && !req.get("cwd").getAsString().isEmpty()) {
+                        try {
+                            agent.setWorkspaceDir(req.get("cwd").getAsString());
+                        } catch (IOException e) {
+                            JsonObject result = new JsonObject();
+                            result.addProperty("error", e.getMessage());
+                            sendJson(exchange, result, 400);
+                            return;
+                        }
+                    }
                     if (agent.loadConversation(sessionId)) {
+                        List<JsonObject> messages = sessionManager.loadSession(sessionId);
+                        JsonArray messageArray = new JsonArray();
+                        for (JsonObject msg : messages) {
+                            messageArray.add(msg);
+                        }
                         JsonObject result = new JsonObject();
                         result.addProperty("success", true);
                         result.addProperty("message", "已恢复会话 " + sessionId);
+                        result.add("messages", messageArray);
+                        result.addProperty("sessionId", sessionId);
+                        result.addProperty("cwd", agent.getWorkspaceDir());
                         sendJson(exchange, result, 200);
                     } else {
                         sendJson(exchange, GSON.fromJson("{\"error\":\"未找到会话\"}", JsonObject.class), 404);

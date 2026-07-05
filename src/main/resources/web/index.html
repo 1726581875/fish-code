@@ -34,23 +34,69 @@
 
         /* ================= 侧边栏 ================= */
         .sidebar {
-            width: 48px;
+            width: 300px;
             background: var(--bg-white);
             border-right: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
-            align-items: center;
-            padding-top: 8px;
             flex-shrink: 0;
+            overflow: hidden;
         }
-        .sidebar-icon {
-            width: 36px; height: 36px;
+        .sidebar-header {
+            height: 36px; padding: 0 12px; border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 13px; font-weight: 600; color: var(--text-main);
+        }
+        .sidebar-action {
+            width: 24px; height: 24px; border: none; border-radius: 5px;
+            background: transparent; color: var(--text-muted); cursor: pointer;
             display: flex; align-items: center; justify-content: center;
-            color: var(--text-muted); cursor: pointer;
-            margin-bottom: 4px; border-radius: 6px; transition: all 0.15s;
         }
-        .sidebar-icon:hover { color: var(--text-main); background: var(--bg-gray); }
-        .sidebar-icon.active { color: var(--accent-blue); background: #ddf4ff; }
+        .sidebar-action:hover { background: var(--bg-gray); color: var(--text-main); }
+        .sidebar-section {
+            min-height: 0; display: flex; flex-direction: column; flex: 1;
+        }
+        .section-title {
+            height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 6px;
+            font-size: 11px; font-weight: 700; color: var(--text-secondary);
+            text-transform: uppercase; letter-spacing: 0.3px;
+            background: var(--bg-gray); border-bottom: 1px solid var(--border-light);
+        }
+        .section-title .section-count { margin-left: auto; font-weight: 500; color: var(--text-muted); }
+        .sidebar-list {
+            flex: 1; overflow-y: auto; padding: 6px;
+        }
+        .sidebar-empty {
+            padding: 12px 8px; color: var(--text-muted); font-size: 12px; line-height: 1.5;
+        }
+        .project-group {
+            margin-bottom: 10px;
+        }
+        .project-title {
+            min-height: 34px; padding: 6px 8px; display: flex; align-items: center; gap: 9px;
+            color: var(--text-main); font-size: 14px; font-weight: 500;
+        }
+        .project-title i {
+            width: 16px; color: var(--text-secondary); text-align: center;
+        }
+        .project-name {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .session-row {
+            min-height: 26px; border-radius: 5px; padding: 4px 6px;
+            display: flex; align-items: center; gap: 6px;
+            color: var(--text-secondary); cursor: pointer; font-size: 12px;
+        }
+        .session-row:hover { background: var(--bg-gray); color: var(--text-main); }
+        .session-row {
+            margin-left: 28px; align-items: center; flex-direction: row; gap: 8px;
+            padding: 8px 10px; min-height: 38px; font-size: 14px;
+        }
+        .session-row.active { background: #eaeef2; color: var(--text-main); font-weight: 600; }
+        .session-title { flex: 1; color: inherit; font-weight: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .session-meta {
+            color: var(--text-muted); font-size: 13px; white-space: nowrap;
+        }
 
         /* ================= 工作区 ================= */
         .workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -296,6 +342,29 @@
         .confirm-msg {
             max-width: 860px; margin: 0 auto 16px; width: 100%;
         }
+        .ai-status-card {
+            display: flex; align-items: center; gap: 10px;
+            color: var(--text-secondary);
+        }
+        .ai-status-icon {
+            width: 26px; height: 26px; border-radius: 50%;
+            background: #ddf4ff; color: var(--accent-blue);
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+        }
+        .ai-status-main { flex: 1; min-width: 0; }
+        .ai-status-title {
+            color: var(--text-main); font-weight: 600; font-size: 14px; margin-bottom: 2px;
+        }
+        .ai-status-sub {
+            font-size: 12px; color: var(--text-muted);
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .ai-status-dots span {
+            display: inline-block; animation: blink 1.4s infinite; opacity: 0.25;
+        }
+        .ai-status-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-status-dots span:nth-child(3) { animation-delay: 0.4s; }
         .confirm-msg-body {
             background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;
             padding: 14px 16px;
@@ -355,6 +424,10 @@
             0%, 100% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.4; transform: scale(0.8); }
         }
+        @keyframes blink {
+            0%, 80%, 100% { opacity: 0.25; }
+            40% { opacity: 1; }
+        }
         .input-area.disabled { opacity: 0.5; pointer-events: none; }
 
         @media (max-width: 1024px) { .right-panel { display: none; } }
@@ -366,11 +439,15 @@
 <body>
 
 <div class="sidebar">
-    <div class="sidebar-icon active" title="聊天"><i class="fas fa-comment-dots"></i></div>
-    <div class="sidebar-icon" title="文件"><i class="fas fa-folder-tree"></i></div>
-    <div class="sidebar-icon" title="搜索"><i class="fas fa-search"></i></div>
-    <div class="sidebar-icon" title="调试"><i class="fas fa-bug"></i></div>
-    <div class="sidebar-icon" title="扩展"><i class="fas fa-puzzle-piece"></i></div>
+    <div class="sidebar-header">
+        <span>项目</span>
+        <button class="sidebar-action" title="刷新" onclick="refreshSidebar()"><i class="fas fa-rotate"></i></button>
+    </div>
+    <div class="sidebar-section sessions">
+        <div class="sidebar-list" id="sessionList">
+            <div class="sidebar-empty">暂无会话</div>
+        </div>
+    </div>
 </div>
 
 <div class="workspace">
@@ -480,6 +557,7 @@
     var selectedModel = '';
     var currentCwd = '';
     var toolCallCount = 0;
+    var currentSessionId = '';
 
     function authFetch(url, opts) {
         opts = opts || {};
@@ -506,6 +584,7 @@
         }).catch(function () {});
         loadModels();
         loadCwd();
+        loadSessions();
     }
 
     // ==================== 目录历史管理 ====================
@@ -536,7 +615,11 @@
             document.getElementById('cwdInput').value = currentCwd;
             authFetch('/cwd', { method: 'POST', body: JSON.stringify({ cwd: currentCwd }) })
                 .then(function (r) { return r.json(); }).then(function (d) {
-                    if (d.cwd) { currentCwd = d.cwd; document.getElementById('cwdInput').value = currentCwd; }
+                    if (d.cwd) {
+                        currentCwd = d.cwd;
+                        document.getElementById('cwdInput').value = currentCwd;
+                        loadSessions();
+                    }
                 }).catch(function () {});
             return;
         }
@@ -544,6 +627,7 @@
             currentCwd = d.cwd || '';
             document.getElementById('cwdInput').value = currentCwd;
             saveLastCwd(currentCwd);
+            loadSessions();
         }).catch(function () {});
     }
 
@@ -562,6 +646,7 @@
                     saveLastCwd(currentCwd);
                     saveCwdToHistory(currentCwd);
                     addAgentLog('工作目录', currentCwd, 'success');
+                    loadSessions();
                 }
             }).catch(function () {
                 input.value = currentCwd;
@@ -593,6 +678,133 @@
             selectedModel = defaultModel;
             document.getElementById('modelStatus').textContent = selectedModel;
         }).catch(function () {});
+    }
+
+    // ==================== 左侧项目与会话 ====================
+    function refreshSidebar() {
+        loadSessions();
+    }
+
+    function loadSessions() {
+        authFetch('/sessions').then(function (r) { return r.json(); }).then(function (d) {
+            currentSessionId = d.currentSessionId || currentSessionId || '';
+            renderSessions(d.sessions || []);
+        }).catch(function () {});
+    }
+
+    function renderSessions(sessions) {
+        var list = document.getElementById('sessionList');
+        if (!sessions.length) {
+            list.innerHTML = '<div class="sidebar-empty">暂无会话</div>';
+            return;
+        }
+        list.innerHTML = '';
+        var groups = groupSessionsByProject(sessions);
+        groups.forEach(function (group) {
+            var wrap = document.createElement('div');
+            wrap.className = 'project-group';
+            var title = document.createElement('div');
+            title.className = 'project-title';
+            title.title = group.cwd;
+            title.innerHTML = '<i class="far fa-clipboard"></i><span class="project-name">' + escapeHtml(group.name) + '</span>';
+            wrap.appendChild(title);
+            group.sessions.forEach(function (s) {
+                var row = document.createElement('div');
+                row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
+                row.title = s.title || s.id;
+                row.innerHTML =
+                    '<div class="session-title">' + escapeHtml(s.title || '新会话') + '</div>' +
+                    '<div class="session-meta">' + escapeHtml(formatSessionTime(s.updatedAt)) + '</div>';
+                row.onclick = function () { resumeSession(s.id, s.title || '新会话', s.cwd || ''); };
+                wrap.appendChild(row);
+            });
+            list.appendChild(wrap);
+        });
+    }
+
+    function groupSessionsByProject(sessions) {
+        var byCwd = {};
+        sessions.forEach(function (s) {
+            var cwd = s.cwd || currentCwd || '';
+            if (!byCwd[cwd]) {
+                byCwd[cwd] = { cwd: cwd, name: projectName(cwd), sessions: [] };
+            }
+            byCwd[cwd].sessions.push(s);
+        });
+        return Object.keys(byCwd).map(function (k) { return byCwd[k]; });
+    }
+
+    function projectName(cwd) {
+        if (!cwd) return '未命名项目';
+        var parts = cwd.split(/[\\/]/).filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : cwd;
+    }
+
+    function resumeSession(sessionId, title, cwd) {
+        if (!sessionId || isProcessing) return;
+        authFetch('/sessions', { method: 'POST', body: JSON.stringify({ action: 'resume', sessionId: sessionId, cwd: cwd || '' }) })
+            .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || '恢复失败'); return d; }); })
+            .then(function (d) {
+                currentSessionId = sessionId;
+                if (d.cwd) {
+                    currentCwd = d.cwd;
+                    document.getElementById('cwdInput').value = currentCwd;
+                    saveLastCwd(currentCwd);
+                    saveCwdToHistory(currentCwd);
+                }
+                document.getElementById('toolLog').innerHTML = '';
+                document.getElementById('toolLogEmpty').style.display = '';
+                document.getElementById('toolCount').textContent = '0';
+                toolCallCount = 0;
+                renderHistoryMessages(d.messages || []);
+                addAgentLog('恢复会话', title, 'success');
+                loadSessions();
+            })
+            .catch(function (err) {
+                addAgentLog('恢复失败', err.message, 'error');
+            });
+    }
+
+    function renderHistoryMessages(messages) {
+        messagesContainer.innerHTML = '';
+        var rendered = 0;
+        messages.forEach(function (msg) {
+            var role = msg.role || '';
+            if (role === 'system' || role === 'tool') return;
+            var content = msg.content;
+            if ((!content || content === 'null') && msg.tool_calls) {
+                addHistoryToolCalls(msg.tool_calls);
+                rendered++;
+                return;
+            }
+            if (!content) return;
+            addMessage(role === 'user' ? 'user' : 'agent', content);
+            rendered++;
+        });
+        if (rendered === 0) {
+            messagesContainer.innerHTML = '<div class="message welcome-msg"><div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
+                '<div class="msg-body">这个会话暂无可展示的历史消息。</div></div>';
+        }
+    }
+
+    function addHistoryToolCalls(toolCalls) {
+        if (!toolCalls || !toolCalls.length) return;
+        for (var i = 0; i < toolCalls.length; i++) {
+            var tc = toolCalls[i];
+            var fn = tc.function || {};
+            addToolToPanel(fn.name || 'tool_call', fn.arguments || '', 'done');
+        }
+    }
+
+    function formatSessionTime(ms) {
+        if (!ms) return '未知时间';
+        var d = new Date(ms);
+        var now = new Date();
+        var sameDay = d.toDateString() === now.toDateString();
+        var hh = String(d.getHours()).padStart(2, '0');
+        var mm = String(d.getMinutes()).padStart(2, '0');
+        if (sameDay) return hh + ':' + mm;
+        return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
     }
 
     // ==================== 事件监听 ====================
@@ -630,7 +842,7 @@
         toolCallCount = 0;
         hideConfirmPanel();
 
-        var loader = addThinkingMessage('分析需求，制定执行计划...');
+        var loader = addThinkingMessage('AI 正在思考', '分析需求，准备执行...');
         var msgDiv = null, contentDiv = null, gotFirstToken = false;
 
         var chatPayload = { message: text, stream: true };
@@ -657,18 +869,21 @@
                                 if (evt.type === 'token') {
                                     if (!gotFirstToken) {
                                         gotFirstToken = true;
-                                        removeThinkingMessage(loader);
+                                        updateThinkingMessage('AI 正在回复', '正在生成回答...');
                                         msgDiv = createAssistantMsg();
                                         contentDiv = msgDiv.querySelector('.msg-body');
                                     }
                                     appendStreamToken(contentDiv, evt.content);
                                     scrollToBottom();
                                 } else if (evt.type === 'tool_call') {
+                                    updateThinkingMessage(toolStatusTitle(evt.status), evt.name || '工具调用中');
                                     addToolToPanel(evt.name, evt.args, evt.status);
                                     addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name, evt.status === 'done' ? 'success' : 'info');
                                 } else if (evt.type === 'confirm_required') {
+                                    updateThinkingMessage('等待你的确认', evt.name || '工具调用需要确认');
                                     showConfirmPanel(evt.confirmKey, evt.name, evt.args);
                                 } else if (evt.type === 'done') {
+                                    removeThinkingMessage(loader);
                                     if (!msgDiv) { removeThinkingMessage(loader); msgDiv = createAssistantMsg(); contentDiv = msgDiv.querySelector('.msg-body'); }
                                     var raw = contentDiv.getAttribute('data-raw') || contentDiv.textContent;
                                     if (raw) contentDiv.innerHTML = renderMarkdown(raw);
@@ -678,6 +893,8 @@
                                     meta.textContent = evt.durationMs + 'ms | mode: ' + (evt.mode || '');
                                     msgDiv.appendChild(meta);
                                     addAgentLog('完成', evt.durationMs + 'ms', 'success');
+                                    if (evt.sessionId) currentSessionId = evt.sessionId;
+                                    loadSessions();
                                 } else if (evt.type === 'error') {
                                     if (!msgDiv) { removeThinkingMessage(loader); msgDiv = createAssistantMsg(); contentDiv = msgDiv.querySelector('.msg-body'); }
                                     contentDiv.innerHTML += '<br><span style="color:var(--accent-red);">' + escapeHtml(evt.error) + '</span>';
@@ -730,16 +947,42 @@
         contentDiv.innerHTML = renderMarkdown(raw);
     }
 
-    function addThinkingMessage(text) {
+    function addThinkingMessage(title, subtitle) {
         var div = document.createElement('div'); div.className = 'message'; div.id = 'thinking-msg';
         div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
-            '<div class="msg-body"><div style="display:flex;align-items:center;color:var(--accent-blue);">' +
-            '<i class="fas fa-spinner spinner" style="margin-right:8px;"></i>' + text + '</div></div>';
+            '<div class="msg-body"><div class="ai-status-card">' +
+            '<div class="ai-status-icon"><i class="fas fa-spinner spinner"></i></div>' +
+            '<div class="ai-status-main">' +
+            '<div class="ai-status-title">' + escapeHtml(title) + '<span class="ai-status-dots"><span>.</span><span>.</span><span>.</span></span></div>' +
+            '<div class="ai-status-sub">' + escapeHtml(subtitle || '') + '</div>' +
+            '</div></div></div>';
         messagesContainer.appendChild(div); scrollToBottom();
         return div;
     }
 
+    function updateThinkingMessage(title, subtitle) {
+        var el = document.getElementById('thinking-msg');
+        if (!el) {
+            addThinkingMessage(title, subtitle);
+            return;
+        }
+        var titleEl = el.querySelector('.ai-status-title');
+        var subEl = el.querySelector('.ai-status-sub');
+        if (titleEl) {
+            titleEl.innerHTML = escapeHtml(title) + '<span class="ai-status-dots"><span>.</span><span>.</span><span>.</span></span>';
+        }
+        if (subEl) subEl.textContent = subtitle || '';
+        scrollToBottom();
+    }
+
     function removeThinkingMessage(el) { if (el) el.remove(); var e = document.getElementById('thinking-msg'); if (e) e.remove(); }
+
+    function toolStatusTitle(status) {
+        if (status === 'done') return '工具执行完成';
+        if (status === 'rejected') return '工具调用已拒绝';
+        if (status === 'confirming') return '等待你的确认';
+        return 'AI 正在调用工具';
+    }
 
     function addToolToPanel(name, args, status) {
         document.getElementById('toolLogEmpty').style.display = 'none';
@@ -829,6 +1072,8 @@
             toolCallCount = 0;
             hideConfirmPanel();
             addAgentLog('新会话', '已创建', 'success');
+            currentSessionId = '';
+            loadSessions();
         });
     }
 
@@ -951,6 +1196,7 @@
                     document.getElementById('cwdInput').value = currentCwd;
                     saveLastCwd(currentCwd);
                     addAgentLog('工作目录', currentCwd, 'success');
+                    loadSessions();
                 }
             }).catch(function () {});
     }
