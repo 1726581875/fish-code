@@ -20,6 +20,13 @@ public class ReadFileTool extends Tool {
         String path = args.get("path").getAsString();
         int offset = args.has("offset") ? args.get("offset").getAsInt() : 0;
         int limit = args.has("limit") ? args.get("limit").getAsInt() : ToolConstants.OUTPUT_TRUNCATE_CHARS;
+        if (offset < 0) {
+            return "offset 不能为负数";
+        }
+        if (limit <= 0) {
+            return "limit 必须大于 0";
+        }
+        limit = Math.min(limit, ToolConstants.OUTPUT_TRUNCATE_CHARS);
 
         File file = ToolUtils.resolveFileSafe(path);
         if (!file.exists()) {
@@ -45,58 +52,78 @@ public class ReadFileTool extends Tool {
             }
         }
         if (file.isDirectory()) {
-            String[] children = file.list();
+            File[] children = file.listFiles();
             if (children == null) {
                 return "";
             }
-            java.util.Arrays.sort(children);
+            java.util.Arrays.sort(children, (a, b) -> {
+                if (a.isDirectory() != b.isDirectory()) {
+                    return a.isDirectory() ? -1 : 1;
+                }
+                return a.getName().compareToIgnoreCase(b.getName());
+            });
             StringBuilder sb = new StringBuilder();
-            for (String child : children) {
-                sb.append(child).append("\n");
+            for (File child : children) {
+                sb.append(child.getName()).append(child.isDirectory() ? "/" : "").append("\n");
             }
             return sb.toString();
         }
+        if (!file.isFile()) {
+            return "不是普通文件: " + file.getAbsolutePath();
+        }
 
         Path filePath = Paths.get(file.getAbsolutePath());
-        long totalLen = Files.lines(filePath, StandardCharsets.UTF_8)
-                .mapToLong(line -> line.length() + 1).sum();
+        long totalLen = countChars(filePath);
         if (offset >= totalLen) {
             return "(文件共 " + totalLen + " 字符，offset 超出范围)";
         }
 
-        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
-            StringBuilder sb = new StringBuilder();
-            long skipped = 0;
-            int charsRead = 0;
-            String line;
-            boolean started = false;
-
-            while ((line = reader.readLine()) != null && charsRead < limit) {
-                int lineLen = line.length() + 1; // +1 for newline
-
-                if (!started) {
-                    if (skipped + lineLen > offset) {
-                        int startInLine = offset - (int) skipped;
-                        String remaining = line.substring(startInLine);
-                        sb.append(remaining);
-                        charsRead += remaining.length();
-                        started = true;
-                        continue;
-                    }
-                    skipped += lineLen;
-                    continue;
-                }
-
-                sb.append(line).append("\n");
-                charsRead += line.length() + 1;
+        try (Reader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            long skipped = skipFully(reader, offset);
+            if (skipped < offset) {
+                return "(文件共 " + totalLen + " 字符，offset 超出范围)";
             }
-
+            char[] buf = new char[Math.min(limit, 4096)];
+            StringBuilder sb = new StringBuilder();
+            int charsRead = 0;
+            while (charsRead < limit) {
+                int want = Math.min(buf.length, limit - charsRead);
+                int n = reader.read(buf, 0, want);
+                if (n < 0) break;
+                sb.append(buf, 0, n);
+                charsRead += n;
+            }
             String result = sb.toString();
-            if (charsRead < totalLen) {
+            if (offset + charsRead < totalLen) {
                 result += "\n...(已显示 offset " + offset + " 起的 "
                         + charsRead + " / " + totalLen + " 字符)";
             }
             return result;
         }
+    }
+
+    private long countChars(Path filePath) throws IOException {
+        long total = 0;
+        char[] buf = new char[8192];
+        try (Reader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            int n;
+            while ((n = reader.read(buf)) >= 0) {
+                total += n;
+            }
+        }
+        return total;
+    }
+
+    private long skipFully(Reader reader, long chars) throws IOException {
+        long skipped = 0;
+        while (skipped < chars) {
+            long n = reader.skip(chars - skipped);
+            if (n <= 0) {
+                if (reader.read() < 0) break;
+                n = 1;
+            }
+            skipped += n;
+        }
+        return skipped;
     }
 }

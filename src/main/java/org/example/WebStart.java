@@ -22,6 +22,8 @@ public class WebStart {
     private static SessionManager sessionManager;
     private static String webUser;
     private static String webPassword;
+    private static boolean webAuthEnabled;
+    private static boolean generatedWebPassword;
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     private static final Object agentLock = new Object();
@@ -40,12 +42,17 @@ public class WebStart {
         String workspaceDir = args.length > 0
                 ? args[0]
                 : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
-        webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "admin");
-        webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "fish2024");
+        webAuthEnabled = ConfigLoader.getConfigBoolean("web_auth_enabled", "WEB_AUTH_ENABLED", false);
+        webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "fish");
+        webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "");
+        if (webAuthEnabled && (webPassword == null || webPassword.trim().isEmpty())) {
+            webPassword = "fish-" + UUID.randomUUID().toString().substring(0, 8);
+            generatedWebPassword = true;
+        }
 
         if (apiKey.isEmpty()) {
-            System.out.println("请配置 api_key (环境变量 DEEPSEEK_API_KEY 或 ~/.fish-code/config.json)");
-            return;
+            System.out.println("未配置 api_key，Web 会启动但聊天接口会提示配置引导。");
+            System.out.println("请设置环境变量 DEEPSEEK_API_KEY 或 ~/.fish-code/config.json 中的 cur_api_key");
         }
 
         sessionManager = new SessionManager();
@@ -102,7 +109,15 @@ public class WebStart {
             server.start();
 
             System.out.println("\n  Fish Code Web 已启动: \u001B[36mhttp://localhost:" + PORT + "\u001B[0m");
-            System.out.println("  默认账号: " + webUser + " / " + webPassword);
+            if (webAuthEnabled) {
+                System.out.println("  登录已启用，账号: " + webUser);
+                if (generatedWebPassword) {
+                    System.out.println("  本次临时密码: " + webPassword);
+                    System.out.println("  建议在环境变量 WEB_PASSWORD 或 ~/.fish-code/config.json 中配置固定密码");
+                }
+            } else {
+                System.out.println("  登录未启用。如需开启，请设置 WEB_AUTH_ENABLED=true 或 web_auth_enabled=true");
+            }
             System.out.println("  按 Ctrl+C 退出\n");
         } catch (IOException e) {
             System.err.println("启动失败: " + e.getMessage());
@@ -110,6 +125,9 @@ public class WebStart {
     }
 
     private static boolean checkAuth(HttpExchange exchange) {
+        if (!webAuthEnabled) {
+            return true;
+        }
         String token = extractToken(exchange);
         if (token != null) {
             Long expire = tokens.get(token);
@@ -155,9 +173,26 @@ public class WebStart {
     }
 
     private static void addCorsHeaders(HttpExchange exchange) {
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        String origin = exchange.getRequestHeaders().getFirst("Origin");
+        if (isAllowedOrigin(origin, exchange)) {
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
+            exchange.getResponseHeaders().set("Vary", "Origin");
+        }
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie");
+    }
+
+    private static boolean isAllowedOrigin(String origin, HttpExchange exchange) {
+        if (origin == null || origin.trim().isEmpty()) {
+            return false;
+        }
+        String host = exchange.getRequestHeaders().getFirst("Host");
+        if (host != null && origin.equals("http://" + host)) {
+            return true;
+        }
+        return origin.startsWith("http://localhost:")
+                || origin.startsWith("http://127.0.0.1:")
+                || origin.startsWith("http://[::1]:");
     }
 
     private static void handleOptions(HttpExchange exchange) throws IOException {
@@ -207,6 +242,13 @@ public class WebStart {
                 handleOptions(exchange);
                 return;
             }
+            if (!webAuthEnabled) {
+                JsonObject result = new JsonObject();
+                result.addProperty("success", true);
+                result.addProperty("authEnabled", false);
+                sendJson(exchange, result, 200);
+                return;
+            }
             if (!"POST".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 exchange.close();
@@ -233,7 +275,7 @@ public class WebStart {
                 tokens.put(token, System.currentTimeMillis() + expireMs);
                 addCorsHeaders(exchange);
                 exchange.getResponseHeaders().add("Set-Cookie",
-                    "fish_token=" + token + "; Path=/; HttpOnly");
+                    "fish_token=" + token + "; Path=/; HttpOnly; SameSite=Lax");
                 result.addProperty("success", true);
                 result.addProperty("token", token);
             } else {
@@ -297,7 +339,6 @@ public class WebStart {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"消息过长，上限50000字符\"}", JsonObject.class), 400);
                 return;
             }
-
             String resolvedApiUrl = null;
             String resolvedApiKey = null;
             if (reqModel != null) {
@@ -312,7 +353,20 @@ public class WebStart {
                         }
                     }
                 }
+                boolean hasRequestKey = resolvedApiKey != null && !resolvedApiKey.isEmpty();
+                boolean hasDefaultKey = agent.getApiKey() != null && !agent.getApiKey().isEmpty();
+                if (!hasRequestKey && !hasDefaultKey) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("error", "未配置 API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 ~/.fish-code/config.json 中配置 cur_api_key / models[].api_key 后重启服务。");
+                    sendJson(exchange, result, 503);
+                    return;
+                }
                 TerminalStart.setRequestOverride(reqModel, resolvedApiUrl, resolvedApiKey);
+            } else if (agent.getApiKey() == null || agent.getApiKey().isEmpty()) {
+                JsonObject result = new JsonObject();
+                result.addProperty("error", "未配置 API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 ~/.fish-code/config.json 中配置 cur_api_key 后重启服务。");
+                sendJson(exchange, result, 503);
+                return;
             }
             if (reqCwd != null && !reqCwd.isEmpty()) {
                 TerminalStart.setCurrentCwd(reqCwd);
@@ -366,6 +420,21 @@ public class WebStart {
                             evt.addProperty("name", fnName);
                             evt.addProperty("args", fnArgs);
                             evt.addProperty("status", status);
+                            String data = "data: " + GSON.toJson(evt) + "\n\n";
+                            os.write(data.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException ignored) {}
+                    }
+
+                    @Override
+                    public void onToolResult(String fnName, String fnArgs, String status, JsonObject result) {
+                        try {
+                            JsonObject evt = new JsonObject();
+                            evt.addProperty("type", "tool_call");
+                            evt.addProperty("name", fnName);
+                            evt.addProperty("args", fnArgs);
+                            evt.addProperty("status", status);
+                            evt.add("result", result == null ? new JsonObject() : result);
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
@@ -580,6 +649,7 @@ public class WebStart {
             }
             JsonObject config = ConfigLoader.loadConfig();
             JsonObject result = new JsonObject();
+            boolean anyModelApiKeyConfigured = false;
             if (config.has("models")) {
                 JsonArray safeModels = new JsonArray();
                 for (JsonElement el : config.getAsJsonArray("models")) {
@@ -588,9 +658,10 @@ public class WebStart {
                     for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
                         String key = entry.getKey();
                         if ("api_key".equals(key) || "apiKey".equals(key)) {
-                            model.addProperty("apiKeyConfigured",
-                                    !entry.getValue().isJsonNull()
-                                            && !entry.getValue().getAsString().isEmpty());
+                            boolean configured = !entry.getValue().isJsonNull()
+                                    && !entry.getValue().getAsString().isEmpty();
+                            anyModelApiKeyConfigured = anyModelApiKeyConfigured || configured;
+                            model.addProperty("apiKeyConfigured", configured);
                         } else {
                             model.add(key, entry.getValue());
                         }
@@ -604,7 +675,13 @@ public class WebStart {
             result.addProperty("model", agent.getModel());
             result.addProperty("apiUrl", agent.getApiUrl());
             result.addProperty("workspaceDir", agent.getWorkspaceDir());
-            result.addProperty("apiKeyConfigured", agent.getApiKey() != null && !agent.getApiKey().isEmpty());
+            result.addProperty("webAuthEnabled", webAuthEnabled);
+            boolean apiKeyConfigured = (agent.getApiKey() != null && !agent.getApiKey().isEmpty()) || anyModelApiKeyConfigured;
+            result.addProperty("apiKeyConfigured", apiKeyConfigured);
+            result.addProperty("configured", apiKeyConfigured);
+            if (!apiKeyConfigured) {
+                result.addProperty("setupMessage", "未配置 API Key：请设置环境变量 DEEPSEEK_API_KEY，或在 ~/.fish-code/config.json 中配置 cur_api_key 后重启服务。");
+            }
             if (config.has("cur_model")) {
                 result.addProperty("cur_model", config.get("cur_model").getAsString());
             }

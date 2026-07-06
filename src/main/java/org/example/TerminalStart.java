@@ -412,8 +412,8 @@ public class TerminalStart {
 
             callback.onToolCall(fnName, fnArgs, "running");
             System.out.println("\n[调用工具] " + fnName + "(" + fnArgs + ")");
-            executeAndAddToolResult(fnName, fnArgs, callId);
-            callback.onToolCall(fnName, fnArgs, "done");
+            ToolResult result = executeAndAddToolResult(fnName, fnArgs, callId);
+            callback.onToolResult(fnName, fnArgs, "done", result.getDetails());
         }
     }
 
@@ -431,22 +431,41 @@ public class TerminalStart {
         messagesDirty = true;
     }
 
-    private void executeAndAddToolResult(String fnName, String fnArgs, String callId) {
+    private ToolResult executeAndAddToolResult(String fnName, String fnArgs, String callId) {
         Tool tool = toolMap.get(fnName);
-        String result = tool != null
-                ? tool.execute(GSON.fromJson(fnArgs, JsonObject.class))
-                : "未知工具: " + fnName;
+        ToolResult result;
+        if (tool == null) {
+            JsonObject details = new JsonObject();
+            details.addProperty("error", "unknown_tool");
+            result = new ToolResult("未知工具: " + fnName, details);
+        } else {
+            try {
+                JsonObject parsedArgs = GSON.fromJson(fnArgs, JsonObject.class);
+                if (parsedArgs == null) parsedArgs = new JsonObject();
+                result = tool.executeDetailed(parsedArgs);
+            } catch (Exception e) {
+                JsonObject details = new JsonObject();
+                details.addProperty("error", "invalid_tool_arguments");
+                details.addProperty("message", e.getMessage());
+                result = new ToolResult("工具参数解析失败: " + e.getMessage() + "\n请重新生成合法 JSON 参数后再调用此工具。", details);
+            }
+        }
 
         JsonObject toolMsg = new JsonObject();
         toolMsg.addProperty("role", "tool");
         toolMsg.addProperty("tool_call_id", callId);
-        toolMsg.addProperty("content", result);
+        toolMsg.addProperty("content", result.getContent());
         messages.add(toolMsg);
         persistMessage(toolMsg);
         messagesDirty = true;
+        return result;
     }
 
     int estimateTokens() {
+        return countContextChars() / 3;
+    }
+
+    private int countContextChars() {
         int total = 0;
         for (JsonObject msg : messages) {
             if (msg.has("content") && !msg.get("content").isJsonNull()) {
@@ -456,7 +475,7 @@ public class TerminalStart {
                 total += msg.get("tool_calls").toString().length();
             }
         }
-        return total / 3;
+        return total;
     }
 
     private void loadHistory() {
@@ -757,7 +776,7 @@ public class TerminalStart {
     }
 
     private void trimContextIfNeeded() {
-        int totalChars = estimateTokens();
+        int totalChars = countContextChars();
         if (totalChars <= ToolConstants.CONTEXT_SOFT_LIMIT_CHARS) return;
 
         int keepFrom = 1;
@@ -788,8 +807,8 @@ public class TerminalStart {
                 trimmed.add(systemMsg);
             }
             JsonObject truncationNote = new JsonObject();
-            truncationNote.addProperty("role", "user");
-            truncationNote.addProperty("content", "(之前的对话内容因上下文限制已被截断，请基于后续上下文继续)");
+            truncationNote.addProperty("role", "system");
+            truncationNote.addProperty("content", buildContextSummary(1, keepFrom));
             trimmed.add(truncationNote);
             for (int i = keepFrom; i < messages.size(); i++) {
                 trimmed.add(messages.get(i));
@@ -798,6 +817,28 @@ public class TerminalStart {
             messages.addAll(trimmed);
             messagesDirty = true;
         }
+    }
+
+    private String buildContextSummary(int fromInclusive, int toExclusive) {
+        int omitted = Math.max(0, toExclusive - fromInclusive);
+        StringBuilder sb = new StringBuilder();
+        sb.append("上下文已压缩：为控制请求长度，省略了较早的 ")
+                .append(omitted).append(" 条消息。");
+        int samples = 0;
+        for (int i = fromInclusive; i < toExclusive && samples < 6; i++) {
+            JsonObject msg = messages.get(i);
+            String role = msg.has("role") ? msg.get("role").getAsString() : "unknown";
+            if (!msg.has("content") || msg.get("content").isJsonNull()) continue;
+            String content = msg.get("content").getAsString().replaceAll("\\s+", " ").trim();
+            if (content.isEmpty()) continue;
+            if (content.length() > 120) {
+                content = content.substring(0, 120) + "...";
+            }
+            sb.append("\n- ").append(role).append(": ").append(content);
+            samples++;
+        }
+        sb.append("\n请基于保留的近期上下文继续任务；如缺少细节，请主动重新读取项目文件。");
+        return sb.toString();
     }
 
     private boolean confirmAction(String fnName, String fnArgs) throws IOException {
@@ -1191,23 +1232,7 @@ public class TerminalStart {
     }
 
     private static void handleUndo(TerminalStart agent) {
-        java.io.File workDir = new java.io.File(getCurrentCwd());
-        java.io.File[] bakFiles = workDir.listFiles((dir, name) -> name.endsWith(".bak"));
-        if (bakFiles == null || bakFiles.length == 0) {
-            System.out.println("  \u001B[33m没有可恢复的文件编辑（未找到 .bak 备份文件）\u001B[0m");
-            return;
-        }
-        java.util.Arrays.sort(bakFiles, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-        java.io.File latest = bakFiles[0];
-        String origPath = latest.getAbsolutePath().replace(".bak", "");
-        java.io.File origFile = new java.io.File(origPath);
-        try {
-            java.nio.file.Files.copy(latest.toPath(), origFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            latest.delete();
-            System.out.println("  \u001B[36m已恢复: " + origFile.getName() + "\u001B[0m");
-        } catch (Exception e) {
-            System.out.println("  \u001B[31m恢复失败: " + e.getMessage() + "\u001B[0m");
-        }
+        System.out.println("  \u001B[33m当前版本不再自动生成 .bak 文件。请根据会话中的 diff 手动回滚，或让 Agent 按 diff 反向修改。\u001B[0m");
     }
 
     private static void printBanner(String model) {

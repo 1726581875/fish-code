@@ -48,7 +48,7 @@ function login(){
     .then(function(r){return r.json()})
     .then(function(data){
       if(data.success){
-        localStorage.setItem('fish_token',data.token);
+        if(data.token)localStorage.setItem('fish_token',data.token);
         window.location.href='/';
       }else{
         document.getElementById('error').style.display='block';

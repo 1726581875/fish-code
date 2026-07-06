@@ -57,4 +57,19 @@ public final class ConfigLoader {
         }
         return defaultValue;
     }
+
+    public static boolean getConfigBoolean(String key, String envKey, boolean defaultValue) {
+        String envVal = System.getenv(envKey);
+        if (envVal != null && !envVal.trim().isEmpty()) {
+            return "true".equalsIgnoreCase(envVal.trim())
+                    || "1".equals(envVal.trim())
+                    || "yes".equalsIgnoreCase(envVal.trim())
+                    || "on".equalsIgnoreCase(envVal.trim());
+        }
+        JsonObject config = loadConfig();
+        if (config.has(key) && !config.get(key).isJsonNull()) {
+            return config.get(key).getAsBoolean();
+        }
+        return defaultValue;
+    }
 }

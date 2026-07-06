@@ -16,6 +16,6 @@
       "api_key": ""
     }
   ],
-  "web_user": "fish",
-  "web_password": "fish2024"
+  "web_auth_enabled": false,
+  "web_user": "fish"
 }

@@ -19,10 +19,16 @@ public final class DiffUtils {
 
     public static void printEditDiff(String filePath, String oldContent, String newContent,
                                       String oldString, String newString) {
+        System.out.println(buildEditDiff(filePath, oldContent, newContent, oldString, newString));
+    }
+
+    public static String buildEditDiff(String filePath, String oldContent, String newContent,
+                                       String oldString, String newString) {
         String displayPath = shortenPath(filePath);
         String[] oldLines = oldContent.split("\n", -1);
         String[] oldChunk = oldString.split("\n", -1);
         String[] newChunk = newString.split("\n", -1);
+        StringBuilder out = new StringBuilder();
 
         int oldStartLine = findLineIndex(oldContent, oldString);
         if (oldStartLine < 0) oldStartLine = 0;
@@ -37,14 +43,14 @@ public final class DiffUtils {
             if (e.type != EditType.DELETE) newCount++;
         }
 
-        System.out.println(BOLD + "\n--- a/" + displayPath + RESET);
-        System.out.println(BOLD + "+++ b/" + displayPath + RESET);
-        System.out.println(CYAN + "@@ -" + (oldStartLine + 1) + "," + oldCount
-                + " +" + (oldStartLine + 1) + "," + newCount + " @@" + RESET);
+        out.append("--- a/").append(displayPath).append('\n');
+        out.append("+++ b/").append(displayPath).append('\n');
+        out.append("@@ -").append(oldStartLine + 1).append(',').append(oldCount)
+                .append(" +").append(oldStartLine + 1).append(',').append(newCount).append(" @@\n");
 
         for (int i = oldStartLine - ctxBefore; i < oldStartLine; i++) {
             if (i >= 0 && i < oldLines.length) {
-                System.out.println(" " + padNum(i + 1) + " " + oldLines[i]);
+                out.append(" ").append(padNum(i + 1)).append(" ").append(oldLines[i]).append('\n');
             }
         }
 
@@ -52,13 +58,13 @@ public final class DiffUtils {
         for (Edit e : edits) {
             switch (e.type) {
                 case KEEP:
-                    System.out.println(" " + padNum(oPos + 1) + " " + oldChunk[oi]);
+                    out.append(" ").append(padNum(oPos + 1)).append(" ").append(oldChunk[oi]).append('\n');
                     oPos++; nPos++; oi++; ni++; break;
                 case DELETE:
-                    System.out.println(RED + "-" + padNum(oPos + 1) + " " + oldChunk[oi] + RESET);
+                    out.append("-").append(padNum(oPos + 1)).append(" ").append(oldChunk[oi]).append('\n');
                     oPos++; oi++; break;
                 case INSERT:
-                    System.out.println(GREEN + "+" + padNum(nPos + 1) + " " + newChunk[ni] + RESET);
+                    out.append("+").append(padNum(nPos + 1)).append(" ").append(newChunk[ni]).append('\n');
                     nPos++; ni++; break;
             }
         }
@@ -66,72 +72,81 @@ public final class DiffUtils {
         int afterStart = oldStartLine + oldChunk.length;
         for (int i = afterStart; i < afterStart + ctxAfter; i++) {
             if (i < oldLines.length) {
-                System.out.println(" " + padNum(i + 1) + " " + oldLines[i]);
+                out.append(" ").append(padNum(i + 1)).append(" ").append(oldLines[i]).append('\n');
             }
         }
-        System.out.println();
+        return out.toString();
     }
 
     public static void printWriteDiff(String filePath, String oldContent, String newContent) {
+        System.out.println(buildWriteDiff(filePath, oldContent, newContent));
+    }
+
+    public static String buildWriteDiff(String filePath, String oldContent, String newContent) {
         String displayPath = shortenPath(filePath);
         String[] oldLines = oldContent.split("\n", -1);
         String[] newLines = newContent.split("\n", -1);
+        StringBuilder out = new StringBuilder();
 
         if (oldLines.length > MAX_DIFF_LINES || newLines.length > MAX_DIFF_LINES) {
-            System.out.println(BOLD + "\n--- a/" + displayPath + RESET);
-            System.out.println(BOLD + "+++ b/" + displayPath + RESET);
-            System.out.println(CYAN + "  (文件较大，跳过差异预览: " + oldLines.length + " → " + newLines.length + " 行)" + RESET);
-            System.out.println();
-            return;
+            out.append("--- a/").append(displayPath).append('\n');
+            out.append("+++ b/").append(displayPath).append('\n');
+            out.append("  (文件较大，跳过差异预览: ").append(oldLines.length)
+                    .append(" -> ").append(newLines.length).append(" 行)\n");
+            return out.toString();
         }
 
         List<Edit> raw = diffEdits(oldLines, newLines);
         List<Hunk> hunks = groupHunks(raw, CTX);
         if (hunks.isEmpty()) {
-            System.out.println("  (文件内容无变化)");
-            return;
+            return "  (文件内容无变化)";
         }
 
-        System.out.println(BOLD + "\n--- a/" + displayPath + RESET);
-        System.out.println(BOLD + "+++ b/" + displayPath + RESET);
+        out.append("--- a/").append(displayPath).append('\n');
+        out.append("+++ b/").append(displayPath).append('\n');
 
         for (Hunk h : hunks) {
-            System.out.println(CYAN + "@@ -" + (h.oldStart + 1) + "," + h.oldCount
-                    + " +" + (h.newStart + 1) + "," + h.newCount + " @@" + RESET);
+            out.append("@@ -").append(h.oldStart + 1).append(',').append(h.oldCount)
+                    .append(" +").append(h.newStart + 1).append(',').append(h.newCount).append(" @@\n");
 
             int oi = h.oldStart, ni = h.newStart;
             for (Edit e : h.edits) {
                 switch (e.type) {
                     case KEEP:
-                        System.out.println(" " + padNum(oi + 1) + " " + oldLines[oi]);
+                        out.append(" ").append(padNum(oi + 1)).append(" ").append(oldLines[oi]).append('\n');
                         oi++; ni++; break;
                     case DELETE:
-                        System.out.println(RED + "-" + padNum(oi + 1) + " " + oldLines[oi] + RESET);
+                        out.append("-").append(padNum(oi + 1)).append(" ").append(oldLines[oi]).append('\n');
                         oi++; break;
                     case INSERT:
-                        System.out.println(GREEN + "+" + padNum(ni + 1) + " " + newLines[ni] + RESET);
+                        out.append("+").append(padNum(ni + 1)).append(" ").append(newLines[ni]).append('\n');
                         ni++; break;
                 }
             }
         }
-        System.out.println();
+        return out.toString();
     }
 
     public static void printCreateDiff(String filePath, String newContent) {
+        System.out.println(buildCreateDiff(filePath, newContent));
+    }
+
+    public static String buildCreateDiff(String filePath, String newContent) {
         String displayPath = shortenPath(filePath);
         String[] newLines = newContent.split("\n", -1);
         int showCount = Math.min(newLines.length, MAX_PREVIEW);
+        StringBuilder out = new StringBuilder();
 
-        System.out.println(BOLD + "\n--- /dev/null" + RESET);
-        System.out.println(BOLD + "+++ b/" + displayPath + RESET);
-        System.out.println(CYAN + "@@ -0,0 +1," + newLines.length + " @@" + RESET);
+        out.append("--- /dev/null\n");
+        out.append("+++ b/").append(displayPath).append('\n');
+        out.append("@@ -0,0 +1,").append(newLines.length).append(" @@\n");
         for (int i = 0; i < showCount; i++) {
-            System.out.println(GREEN + "+" + padNum(i + 1) + " " + newLines[i] + RESET);
+            out.append("+").append(padNum(i + 1)).append(" ").append(newLines[i]).append('\n');
         }
         if (newLines.length > showCount) {
-            System.out.println(CYAN + "  ... +" + (newLines.length - showCount) + " 行省略" + RESET);
+            out.append("  ... +").append(newLines.length - showCount).append(" 行省略\n");
         }
-        System.out.println();
+        return out.toString();
     }
 
     static List<Edit> diffEdits(String[] a, String[] b) {

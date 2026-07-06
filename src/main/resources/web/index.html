@@ -56,6 +56,10 @@
         .sidebar-section {
             min-height: 0; display: flex; flex-direction: column; flex: 1;
         }
+        .sidebar-section.project-files {
+            flex: 0 0 240px;
+            border-bottom: 1px solid var(--border-color);
+        }
         .section-title {
             height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 6px;
             font-size: 11px; font-weight: 700; color: var(--text-secondary);
@@ -68,6 +72,19 @@
         }
         .sidebar-empty {
             padding: 12px 8px; color: var(--text-muted); font-size: 12px; line-height: 1.5;
+        }
+        .project-tree-item {
+            min-height: 28px; padding: 5px 7px; border-radius: 5px;
+            display: flex; align-items: center; gap: 7px;
+            color: var(--text-secondary); cursor: pointer; font-size: 12px;
+        }
+        .project-tree-item:hover { background: var(--bg-gray); color: var(--text-main); }
+        .project-tree-item i { width: 14px; color: var(--accent-blue); text-align: center; }
+        .project-tree-item.file i { color: var(--text-muted); }
+        .project-tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .project-tree-path {
+            padding: 7px 8px 4px; color: var(--text-muted); font-size: 11px;
+            font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .project-group {
             margin-bottom: 10px;
@@ -548,6 +565,19 @@
         }
         .tool-mini-btn:hover { background: var(--border-light); color: var(--text-main); }
         .tool-item.expanded .tool-item-args { max-height: 220px; }
+        .tool-item-result {
+            display: none;
+            margin-top: 6px;
+            border-top: 1px solid var(--border-light);
+            padding-top: 6px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: pre-wrap;
+            max-height: 260px;
+            overflow: auto;
+        }
+        .tool-item.expanded .tool-item-result { display: block; }
         .panel-empty, .status-line {
             color: var(--text-muted); font-size: 12px; line-height: 1.5; padding: 4px;
         }
@@ -609,10 +639,22 @@
             <button class="sidebar-action" title="刷新" onclick="refreshSidebar()"><i class="fas fa-rotate"></i></button>
         </div>
     </div>
-    <div class="sidebar-search">
-        <input type="search" id="sessionSearch" placeholder="搜索会话或项目">
+    <div class="sidebar-section project-files">
+        <div class="section-title">
+            <i class="fas fa-folder-tree"></i>
+            项目文件
+            <button class="sidebar-action" title="刷新文件树" onclick="loadProjectTree(projectTreePath)" style="margin-left:auto;"><i class="fas fa-rotate"></i></button>
+        </div>
+        <div class="project-tree-path" id="projectTreePath">/</div>
+        <div class="sidebar-list" id="projectTreeList">
+            <div class="sidebar-empty">请选择工作目录</div>
+        </div>
     </div>
     <div class="sidebar-section sessions">
+        <div class="section-title"><i class="fas fa-comments"></i>会话</div>
+        <div class="sidebar-search">
+            <input type="search" id="sessionSearch" placeholder="搜索会话或项目">
+        </div>
         <div class="sidebar-list" id="sessionList">
             <div class="sidebar-empty">暂无会话</div>
         </div>
@@ -639,7 +681,7 @@
             <button class="tab-btn" title="清空当前会话" onclick="clearCurrentSession()" data-lockable>
                 <i class="fas fa-broom" style="margin-right:4px;"></i>清空
             </button>
-            <button class="action-btn" title="退出登录" onclick="logout()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--accent-red);">
+            <button class="action-btn" id="logoutBtn" title="退出登录" onclick="logout()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--accent-red);">
                 <i class="fas fa-sign-out-alt"></i>
             </button>
         </div>
@@ -754,6 +796,8 @@
     var stopRequestedByUser = false;
     var shouldStickToBottom = true;
     var pendingAttachments = [];
+    var projectTreePath = '';
+    var toolItemsByKey = {};
 
     function authFetch(url, opts) {
         opts = opts || {};
@@ -799,6 +843,7 @@
         loadModels();
         loadCwd();
         loadSessions();
+        loadProjectTree('');
     }
 
     function wireEvents() {
@@ -877,6 +922,7 @@
                         cwdInput.value = currentCwd;
                         markCwdClean();
                         loadSessions();
+                        loadProjectTree('');
                     }
                 }).catch(function () {
                     loadServerCwd();
@@ -893,6 +939,7 @@
             markCwdClean();
             saveLastCwd(currentCwd);
             loadSessions();
+            loadProjectTree('');
         }).catch(function (err) {
             addAgentLog('目录读取失败', err.message, 'error');
         });
@@ -915,6 +962,7 @@
                 saveCwdToHistory(currentCwd);
                 addAgentLog('工作目录', currentCwd, 'success');
                 loadSessions();
+                loadProjectTree('');
             })
             .catch(function (err) {
                 addAgentLog('目录切换失败', err.message, 'error');
@@ -946,6 +994,15 @@
             }
             selectedModel = sel.value || d.model || '';
             document.getElementById('modelStatus').textContent = selectedModel;
+            var logoutBtn = document.getElementById('logoutBtn');
+            if (logoutBtn) logoutBtn.style.display = d.webAuthEnabled ? 'inline-flex' : 'none';
+            if (d.setupMessage) {
+                addAgentLog('需要配置', d.setupMessage, 'error');
+                var welcomeBody = document.querySelector('.welcome-msg .msg-body');
+                if (welcomeBody) {
+                    welcomeBody.innerHTML = renderMarkdown('服务已启动，但还不能聊天：' + d.setupMessage);
+                }
+            }
         }).catch(function (err) {
             addAgentLog('模型读取失败', err.message, 'error');
         });
@@ -953,6 +1010,64 @@
 
     function refreshSidebar() {
         loadSessions();
+        loadProjectTree(projectTreePath);
+    }
+
+    function loadProjectTree(path) {
+        path = path || '';
+        projectTreePath = path;
+        var list = document.getElementById('projectTreeList');
+        var pathEl = document.getElementById('projectTreePath');
+        if (!list || !pathEl) return;
+        pathEl.textContent = path || '/';
+        list.innerHTML = '<div class="sidebar-empty"><i class="fas fa-spinner spinner"></i> 加载中...</div>';
+        fetchJson('/project/tree?path=' + encodeURIComponent(path)).then(function (d) {
+            projectTreePath = d.path || '';
+            pathEl.textContent = projectTreePath || '/';
+            renderProjectTree(d.items || []);
+        }).catch(function (err) {
+            list.innerHTML = '<div class="sidebar-empty">文件树加载失败：' + escapeHtml(err.message) + '</div>';
+        });
+    }
+
+    function renderProjectTree(items) {
+        var list = document.getElementById('projectTreeList');
+        list.innerHTML = '';
+        if (projectTreePath) {
+            var up = document.createElement('div');
+            up.className = 'project-tree-item';
+            up.innerHTML = '<i class="fas fa-arrow-up"></i><span class="project-tree-name">返回上级</span>';
+            up.onclick = function () {
+                var parts = projectTreePath.split('/').filter(Boolean);
+                parts.pop();
+                loadProjectTree(parts.join('/'));
+            };
+            list.appendChild(up);
+        }
+        if (!items.length) {
+            var empty = document.createElement('div');
+            empty.className = 'sidebar-empty';
+            empty.textContent = '此目录为空';
+            list.appendChild(empty);
+            return;
+        }
+        items.forEach(function (item) {
+            var row = document.createElement('div');
+            row.className = 'project-tree-item ' + (item.type === 'file' ? 'file' : 'dir');
+            row.title = item.path || item.name;
+            row.innerHTML = '<i class="fas ' + (item.type === 'file' ? 'fa-file-lines' : 'fa-folder') + '"></i><span class="project-tree-name"></span>';
+            row.querySelector('span').textContent = item.name;
+            row.onclick = function () {
+                if (item.type === 'dir') {
+                    loadProjectTree(item.path || '');
+                } else {
+                    userInput.value = '请阅读并分析这个文件：' + (item.path || item.name);
+                    autoResizeInput.call(userInput);
+                    userInput.focus();
+                }
+            };
+            list.appendChild(row);
+        });
     }
 
     function loadSessions() {
@@ -1103,7 +1218,7 @@
         for (var i = 0; i < toolCalls.length; i++) {
             var tc = toolCalls[i];
             var fn = tc.function || {};
-            addToolToPanel(fn.name || 'tool_call', fn.arguments || '', 'done');
+            addToolToPanel(fn.name || 'tool_call', fn.arguments || '', 'done', null);
         }
     }
 
@@ -1173,8 +1288,9 @@
                                     scrollToBottom(false);
                                 } else if (evt.type === 'tool_call') {
                                     updateThinkingMessage(toolStatusTitle(evt.status), evt.name || '工具调用中');
-                                    addToolToPanel(evt.name || 'tool_call', evt.args || '', evt.status || 'running');
+                                    addToolToPanel(evt.name || 'tool_call', evt.args || '', evt.status || 'running', evt.result || null);
                                     addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name || '工具调用', evt.status === 'done' ? 'success' : 'info');
+                                    if (evt.status === 'done' && evt.result) updateTerminalFromTool(evt.name || '', evt.result);
                                 } else if (evt.type === 'confirm_required') {
                                     updateThinkingMessage('等待你的确认', evt.name || '工具调用需要确认');
                                     showConfirmPanel(evt.confirmKey, evt.name || '工具调用', evt.args || '');
@@ -1424,13 +1540,25 @@
         return 'AI 正在调用工具';
     }
 
-    function addToolToPanel(name, args, status) {
+    function addToolToPanel(name, args, status, result) {
         document.getElementById('toolLogEmpty').style.display = 'none';
-        toolCallCount++;
-        document.getElementById('toolCount').textContent = toolCallCount;
         var fullArgs = String(args || '');
         var shortArgs = fullArgs.length > 140 ? fullArgs.substring(0, 140) + '...' : fullArgs;
         var statusLabel = status === 'done' ? '完成' : status === 'rejected' ? '已拒绝' : status === 'confirming' ? '待确认' : '执行中';
+        var key = name + '::' + fullArgs;
+        var existing = toolItemsByKey[key];
+        if (existing) {
+            existing.statusEl.className = 'tool-item-status ' + (status || 'running');
+            existing.statusEl.textContent = statusLabel;
+            if (result) {
+                existing.resultText = formatToolResult(result);
+                existing.resultEl.textContent = existing.resultText;
+            }
+            return;
+        }
+
+        toolCallCount++;
+        document.getElementById('toolCount').textContent = toolCallCount;
         var div = document.createElement('div');
         div.className = 'tool-item';
         div.id = 'tool-item-' + toolCallCount;
@@ -1462,10 +1590,41 @@
         argsEl.textContent = shortArgs;
         div.appendChild(argsEl);
 
+        var resultEl = document.createElement('div');
+        resultEl.className = 'tool-item-result';
+        resultEl.textContent = result ? formatToolResult(result) : '';
+        div.appendChild(resultEl);
+
         var toolLog = document.getElementById('toolLog');
         toolLog.appendChild(div);
+        toolItemsByKey[key] = { div: div, statusEl: statusEl, argsEl: argsEl, resultEl: resultEl, resultText: resultEl.textContent };
         var panel = document.getElementById('toolPanel');
         panel.scrollTop = panel.scrollHeight;
+    }
+
+    function formatToolResult(result) {
+        if (!result) return '';
+        var parts = [];
+        if (result.type === 'command') {
+            parts.push('$ ' + (result.command || ''));
+            if (result.cwd) parts.push('cwd: ' + result.cwd);
+            if (typeof result.exitCode !== 'undefined') parts.push('exit: ' + result.exitCode + ' | ' + (result.durationMs || 0) + 'ms');
+            if (result.output) parts.push('\n' + result.output);
+        } else {
+            if (result.path) parts.push(result.path);
+            if (result.diff) parts.push(result.diff);
+            if (result.output) parts.push(result.output);
+            if (result.error) parts.push('error: ' + result.error);
+        }
+        return parts.filter(Boolean).join('\n');
+    }
+
+    function updateTerminalFromTool(name, result) {
+        if (!result || result.type !== 'command') return;
+        var output = result.output || '(无输出)';
+        terminalPanel.innerHTML = '<div class="terminal-output"><div><span class="path">' + escapeHtml(result.cwd || currentCwd || '~/project') +
+            '</span> $ ' + escapeHtml(result.command || name) + '</div><pre style="white-space:pre-wrap;margin-top:8px;">' +
+            escapeHtml(output) + '</pre></div>';
     }
 
     function makeMiniButton(icon, title, handler) {
@@ -1489,20 +1648,37 @@
         var empty = messagesContainer.querySelector('.welcome-msg');
         if (empty) empty.remove();
         var argsShort = String(args || '').length > 300 ? String(args).substring(0, 300) + '...' : String(args || '');
+        var summary = summarizeToolForConfirm(name, args);
         var div = document.createElement('div');
         div.className = 'message agent confirm-msg';
         div.id = 'confirm-msg';
         div.innerHTML = '<div class="msg-header agent" style="color:var(--accent-orange);"><i class="fas fa-exclamation-triangle"></i> 需要确认</div>' +
             '<div class="confirm-msg-body">' +
+            '<div class="confirm-msg-title"><i class="fas fa-shield-halved"></i>' + escapeHtml(summary.risk) + '</div>' +
             '<div class="confirm-msg-name">' + escapeHtml(name) + '</div>' +
+            '<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">' + escapeHtml(summary.text) + '</div>' +
             '<div class="confirm-msg-args">' + escapeHtml(argsShort) + '</div>' +
             '<div class="confirm-msg-btns">' +
             '<button class="confirm-btn confirm-btn-approve" onclick="approveConfirm(\'' + escapeAttr(confirmKey) + '\', true)">允许</button>' +
             '<button class="confirm-btn confirm-btn-reject" onclick="approveConfirm(\'' + escapeAttr(confirmKey) + '\', false)">拒绝</button>' +
-            '<button class="confirm-btn confirm-btn-approveAll" onclick="approveConfirmAll(\'' + escapeAttr(confirmKey) + '\')">全部允许</button>' +
             '</div></div>';
         messagesContainer.appendChild(div);
         scrollToBottom(false);
+    }
+
+    function summarizeToolForConfirm(name, args) {
+        var parsed = {};
+        try { parsed = JSON.parse(args || '{}') || {}; } catch (e) {}
+        if (name === 'run_command') {
+            return { risk: '将执行命令', text: parsed.command || '请检查命令参数' };
+        }
+        if (name === 'edit_file') {
+            return { risk: '将修改文件', text: parsed.path || '请检查文件路径' };
+        }
+        if (name === 'write_file') {
+            return { risk: '将写入文件', text: parsed.path || '请检查文件路径' };
+        }
+        return { risk: '将执行工具', text: '请确认本次工具调用' };
     }
 
     function hideConfirmPanel() {
@@ -1558,6 +1734,7 @@
         document.getElementById('toolLogEmpty').style.display = '';
         document.getElementById('toolCount').textContent = '0';
         toolCallCount = 0;
+        toolItemsByKey = {};
     }
 
     function newSession() {

@@ -232,8 +232,21 @@ public class ClaudeSessionsHandler implements HttpHandler {
     }
 
     private void addCorsHeaders(HttpExchange exchange) {
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        String origin = exchange.getRequestHeaders().getFirst("Origin");
+        if (isAllowedOrigin(origin, exchange)) {
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", origin);
+            exchange.getResponseHeaders().set("Vary", "Origin");
+        }
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+    }
+
+    private boolean isAllowedOrigin(String origin, HttpExchange exchange) {
+        if (origin == null || origin.trim().isEmpty()) return false;
+        String host = exchange.getRequestHeaders().getFirst("Host");
+        if (host != null && origin.equals("http://" + host)) return true;
+        return origin.startsWith("http://localhost:")
+                || origin.startsWith("http://127.0.0.1:")
+                || origin.startsWith("http://[::1]:");
     }
 }

@@ -32,7 +32,7 @@ public final class ToolUtils {
             if (!normalizedFile.startsWith(normalizedProject)) {
                 throw new SecurityException("路径遍历被拒绝: " + path);
             }
-            return file;
+            return new File(canonicalPath);
         } catch (IOException e) {
             throw new SecurityException("无法解析路径: " + path, e);
         }
@@ -40,6 +40,9 @@ public final class ToolUtils {
 
     public static List<String> searchFiles(String name, boolean useGlob) {
         List<String> results = new ArrayList<>();
+        if (name == null || name.trim().isEmpty()) {
+            return results;
+        }
         String lowerName = name.toLowerCase();
         File root = new File(TerminalStart.getCurrentCwd());
         java.util.Set<String> seenDirs = new java.util.HashSet<>();
@@ -75,7 +78,7 @@ public final class ToolUtils {
                 }
                 String matchTarget;
                 if (matchPath) {
-                    matchTarget = relPath.replace('\\', '/');
+                    matchTarget = relPath.replace('\\', '/').toLowerCase();
                 } else {
                     matchTarget = f.getName().toLowerCase();
                 }
@@ -102,6 +105,9 @@ public final class ToolUtils {
     }
 
     public static boolean globMatch(String name, String pattern) {
+        if (pattern.startsWith("**/") && globMatch(name, pattern.substring(3))) {
+            return true;
+        }
         if (!pattern.contains("*") && !pattern.contains("?")) {
             return name.equals(pattern);
         }
