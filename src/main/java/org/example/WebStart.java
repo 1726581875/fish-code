@@ -16,7 +16,7 @@ import org.example.tool.ToolConstants;
 public class WebStart {
 
     private static final Gson GSON = new Gson();
-    private static final int PORT = 10000;
+    private static final int PORT = Integer.getInteger("fish.web.port", 10000);
     private static HttpServer server;
     private static TerminalStart agent;
     private static SessionManager sessionManager;
@@ -463,6 +463,8 @@ public class WebStart {
                             doneEvent.addProperty("reply", result.getReply());
                             doneEvent.addProperty("durationMs", result.getDurationMs());
                             doneEvent.addProperty("contextTokens", result.getContextTokens());
+                            doneEvent.addProperty("replyChars", result.getReply() == null ? 0 : result.getReply().length());
+                            doneEvent.addProperty("contextChars", agent.getContextCharCount());
                             doneEvent.addProperty("mode", agent.getMode().label());
                             doneEvent.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
                             String data = "data: " + GSON.toJson(doneEvent) + "\n[END]\n\n";
@@ -510,10 +512,14 @@ public class WebStart {
                 result.addProperty("reply", chatResult.getReply() != null ? chatResult.getReply() : "");
                 result.addProperty("durationMs", chatResult.getDurationMs());
                 result.addProperty("contextTokens", chatResult.getContextTokens());
+                result.addProperty("replyChars", chatResult.getReply() == null ? 0 : chatResult.getReply().length());
+                result.addProperty("contextChars", agent.getContextCharCount());
             } catch (Exception e) {
                 result.addProperty("reply", "错误: " + e.getMessage());
                 result.addProperty("durationMs", 0);
                 result.addProperty("contextTokens", 0);
+                result.addProperty("replyChars", 0);
+                result.addProperty("contextChars", agent.getContextCharCount());
             }
 
             result.addProperty("toolOutput", "");
@@ -538,19 +544,27 @@ public class WebStart {
             if ("GET".equals(method)) {
                 JsonObject result = new JsonObject();
                 result.addProperty("mode", agent.getMode().label());
+                synchronized (agentLock) {
+                    result.addProperty("contextChars", agent.getContextCharCount());
+                }
                 sendJson(exchange, result, 200);
             } else if ("POST".equals(method)) {
                 String body = readBody(exchange);
                 JsonObject req = GSON.fromJson(body, JsonObject.class);
                 String modeName = req.has("mode") ? req.get("mode").getAsString() : "";
-                switch (modeName) {
-                    case "plan":    agent.setMode(AgentMode.PLAN);    break;
-                    case "auto":    agent.setMode(AgentMode.AUTO);    break;
-                    case "confirm": agent.setMode(AgentMode.CONFIRM); break;
-                    default: sendJson(exchange, GSON.fromJson("{\"error\":\"invalid mode\"}", JsonObject.class), 400); return;
+                synchronized (agentLock) {
+                    switch (modeName) {
+                        case "plan":    agent.setMode(AgentMode.PLAN);    break;
+                        case "auto":    agent.setMode(AgentMode.AUTO);    break;
+                        case "confirm": agent.setMode(AgentMode.CONFIRM); break;
+                        default: sendJson(exchange, GSON.fromJson("{\"error\":\"invalid mode\"}", JsonObject.class), 400); return;
+                    }
                 }
                 JsonObject result = new JsonObject();
                 result.addProperty("mode", agent.getMode().label());
+                synchronized (agentLock) {
+                    result.addProperty("contextChars", agent.getContextCharCount());
+                }
                 sendJson(exchange, result, 200);
             }
         }
@@ -576,14 +590,16 @@ public class WebStart {
             } else if ("POST".equals(method)) {
                 String body = readBody(exchange);
                 JsonObject req = GSON.fromJson(body, JsonObject.class);
-                if (req.has("model") && !req.get("model").getAsString().isEmpty()) {
-                    agent.setModel(req.get("model").getAsString());
-                }
-                if (req.has("apiUrl") && !req.get("apiUrl").getAsString().isEmpty()) {
-                    agent.setApiUrl(req.get("apiUrl").getAsString());
-                }
-                if (req.has("apiKey") && !req.get("apiKey").getAsString().isEmpty()) {
-                    agent.setApiKey(req.get("apiKey").getAsString());
+                synchronized (agentLock) {
+                    if (req.has("model") && !req.get("model").getAsString().isEmpty()) {
+                        agent.setModel(req.get("model").getAsString());
+                    }
+                    if (req.has("apiUrl") && !req.get("apiUrl").getAsString().isEmpty()) {
+                        agent.setApiUrl(req.get("apiUrl").getAsString());
+                    }
+                    if (req.has("apiKey") && !req.get("apiKey").getAsString().isEmpty()) {
+                        agent.setApiKey(req.get("apiKey").getAsString());
+                    }
                 }
                 JsonObject result = new JsonObject();
                 result.addProperty("model", agent.getModel());
@@ -704,6 +720,9 @@ public class WebStart {
             if ("GET".equals(method)) {
                 JsonObject result = new JsonObject();
                 result.addProperty("cwd", TerminalStart.getCurrentCwd());
+                synchronized (agentLock) {
+                    result.addProperty("contextChars", agent.getContextCharCount());
+                }
                 sendJson(exchange, result, 200);
             } else if ("POST".equals(method)) {
                 String body = readBody(exchange);
@@ -732,6 +751,9 @@ public class WebStart {
                         }
                     }
                     result.addProperty("cwd", cwd);
+                    synchronized (agentLock) {
+                        result.addProperty("contextChars", agent.getContextCharCount());
+                    }
                 } catch (IOException e) {
                     result.addProperty("error", e.getMessage());
                     sendJson(exchange, result, 400);
@@ -760,35 +782,54 @@ public class WebStart {
             }
             String query = exchange.getRequestURI().getQuery();
             String path = "";
+            boolean includeHidden = false;
             if (query != null) {
                 for (String param : query.split("&")) {
                     String[] kv = param.split("=", 2);
                     if (kv.length == 2 && "path".equals(kv[0])) {
                         path = java.net.URLDecoder.decode(kv[1], "UTF-8");
-                        break;
+                    } else if (kv.length == 2 && "hidden".equals(kv[0])) {
+                        includeHidden = "true".equalsIgnoreCase(kv[1]);
                     }
                 }
             }
-            if (path.isEmpty()) {
-                path = TerminalStart.getCurrentCwd();
-            }
+            if (path.isEmpty()) path = TerminalStart.getCurrentCwd();
             if (path.matches("^[A-Za-z]:$")) {
                 path = path + "\\";
             }
-            java.io.File dir = new java.io.File(path);
+            java.io.File dir = new java.io.File(path).getCanonicalFile();
             if (!dir.exists() || !dir.isDirectory()) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在\"}", JsonObject.class), 400);
                 return;
             }
             JsonObject result = new JsonObject();
             result.addProperty("path", dir.getAbsolutePath());
+            File parent = dir.getParentFile();
+            result.addProperty("parent", parent == null ? "" : parent.getCanonicalPath());
+            result.addProperty("home", new File(System.getProperty("user.home")).getCanonicalPath());
+            result.addProperty("current", new File(agent.getWorkspaceDir()).getCanonicalPath());
+            JsonArray roots = new JsonArray();
+            for (File root : File.listRoots()) {
+                JsonObject rootItem = new JsonObject();
+                rootItem.addProperty("name", root.getAbsolutePath());
+                rootItem.addProperty("path", root.getCanonicalPath());
+                roots.add(rootItem);
+            }
+            result.add("roots", roots);
             JsonArray dirs = new JsonArray();
             java.io.File[] files = dir.listFiles();
-            if (files != null) {
-                for (java.io.File f : files) {
-                    if (f.isDirectory() && !f.getName().startsWith(".")) {
-                        dirs.add(f.getName());
-                    }
+            if (files == null) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"没有权限读取此目录\"}", JsonObject.class), 403);
+                return;
+            }
+            Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+            for (java.io.File f : files) {
+                if (f.isDirectory() && (includeHidden || !f.isHidden())) {
+                    JsonObject dirItem = new JsonObject();
+                    dirItem.addProperty("name", f.getName());
+                    dirItem.addProperty("path", f.getCanonicalPath());
+                    dirItem.addProperty("readable", f.canRead());
+                    dirs.add(dirItem);
                 }
             }
             result.add("dirs", dirs);
@@ -965,6 +1006,11 @@ public class WebStart {
                 JsonObject result = new JsonObject();
                 result.add("sessions", sessions);
                 result.addProperty("currentSessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+                synchronized (agentLock) {
+                    synchronized (agentLock) {
+                        result.addProperty("contextChars", agent.getContextCharCount());
+                    }
+                }
                 sendJson(exchange, result, 200);
             } else if ("POST".equals(method)) {
                 String body = readBody(exchange);
@@ -972,24 +1018,31 @@ public class WebStart {
                 String action = req.has("action") ? req.get("action").getAsString() : "";
 
                 if ("new".equals(action)) {
-                    agent.newConversation();
+                    synchronized (agentLock) {
+                        agent.newConversation();
+                    }
                     JsonObject result = new JsonObject();
                     result.addProperty("success", true);
                     result.addProperty("message", "已创建新会话");
+                    result.addProperty("contextChars", agent.getContextCharCount());
                     sendJson(exchange, result, 200);
                 } else if ("resume".equals(action)) {
                     String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
-                    if (req.has("cwd") && !req.get("cwd").getAsString().isEmpty()) {
-                        try {
-                            agent.setWorkspaceDir(req.get("cwd").getAsString());
-                        } catch (IOException e) {
-                            JsonObject result = new JsonObject();
-                            result.addProperty("error", e.getMessage());
-                            sendJson(exchange, result, 400);
-                            return;
+                    boolean loaded;
+                    synchronized (agentLock) {
+                        if (req.has("cwd") && !req.get("cwd").getAsString().isEmpty()) {
+                            try {
+                                agent.setWorkspaceDir(req.get("cwd").getAsString());
+                            } catch (IOException e) {
+                                JsonObject result = new JsonObject();
+                                result.addProperty("error", e.getMessage());
+                                sendJson(exchange, result, 400);
+                                return;
+                            }
                         }
+                        loaded = agent.loadConversation(sessionId);
                     }
-                    if (agent.loadConversation(sessionId)) {
+                    if (loaded) {
                         List<JsonObject> messages = sessionManager.loadSession(sessionId);
                         JsonArray messageArray = new JsonArray();
                         for (JsonObject msg : messages) {
@@ -1001,15 +1054,23 @@ public class WebStart {
                         result.add("messages", messageArray);
                         result.addProperty("sessionId", sessionId);
                         result.addProperty("cwd", agent.getWorkspaceDir());
+                        synchronized (agentLock) {
+                            result.addProperty("contextChars", agent.getContextCharCount());
+                        }
                         sendJson(exchange, result, 200);
                     } else {
                         sendJson(exchange, GSON.fromJson("{\"error\":\"未找到会话\"}", JsonObject.class), 404);
                     }
                 } else if ("clear".equals(action)) {
-                    agent.clearConversation();
+                    synchronized (agentLock) {
+                        agent.clearConversation();
+                    }
                     JsonObject result = new JsonObject();
                     result.addProperty("success", true);
                     result.addProperty("message", "已清空当前会话上下文");
+                    synchronized (agentLock) {
+                        result.addProperty("contextChars", agent.getContextCharCount());
+                    }
                     sendJson(exchange, result, 200);
                 } else if ("delete".equals(action)) {
                     String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
@@ -1017,9 +1078,11 @@ public class WebStart {
                         sendJson(exchange, GSON.fromJson("{\"error\":\"缺少sessionId\"}", JsonObject.class), 400);
                         return;
                     }
-                    sessionManager.deleteSession(sessionId);
-                    if (sessionId.equals(agent.getCurrentSessionId())) {
-                        agent.newConversation();
+                    synchronized (agentLock) {
+                        sessionManager.deleteSession(sessionId);
+                        if (sessionId.equals(agent.getCurrentSessionId())) {
+                            agent.newConversation();
+                        }
                     }
                     JsonObject result = new JsonObject();
                     result.addProperty("success", true);

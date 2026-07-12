@@ -9,7 +9,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.example.tool.ToolConstants;
 
@@ -22,9 +21,6 @@ public class SessionManager {
     private static final Path INDEX_FILE = BASE_DIR.resolve("sessions-index.json");
 
     private static final AtomicInteger COUNTER = new AtomicInteger((int) (System.currentTimeMillis() & 0xFFFF));
-    private static final AtomicLong lastSaveTime = new AtomicLong(0);
-    private static final long SAVE_DEBOUNCE_MS = 2000;
-
     private final List<JsonObject> index = new CopyOnWriteArrayList<>();
 
     public SessionManager() {
@@ -32,7 +28,7 @@ public class SessionManager {
         loadIndex();
     }
 
-    public String createSession(String cwd, String model) {
+    public synchronized String createSession(String cwd, String model) {
         String id = generateId();
         LocalDate today = LocalDate.now();
         String datePath = today.format(DATE_FMT);
@@ -61,20 +57,20 @@ public class SessionManager {
         return id;
     }
 
-    public void updateTitle(String sessionId, String title) {
+    public synchronized void updateTitle(String sessionId, String title) {
         for (int i = 0; i < index.size(); i++) {
             JsonObject entry = index.get(i);
             if (entry.get("id").getAsString().equals(sessionId)) {
                 JsonObject updated = deepCopy(entry);
                 updated.addProperty("title", title);
                 index.set(i, updated);
-                debouncedSave();
+                saveIndex();
                 return;
             }
         }
     }
 
-    public void appendMessage(String sessionId, JsonObject message) {
+    public synchronized void appendMessage(String sessionId, JsonObject message) {
         Path sessionFile = resolveSessionFile(sessionId);
         if (sessionFile == null) return;
 
@@ -112,7 +108,7 @@ public class SessionManager {
                 break;
             }
         }
-        debouncedSave();
+        saveIndex();
     }
 
     public List<JsonObject> loadSession(String sessionId) {
@@ -165,7 +161,7 @@ public class SessionManager {
         return index.get(index.size() - 1).get("id").getAsString();
     }
 
-    public void deleteSession(String sessionId) {
+    public synchronized void deleteSession(String sessionId) {
         Path sessionFile = resolveSessionFile(sessionId);
         if (sessionFile != null) {
             try {
@@ -245,16 +241,6 @@ public class SessionManager {
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             System.err.println("保存会话索引失败: " + e.getMessage());
-        }
-    }
-
-    private void debouncedSave() {
-        long now = System.currentTimeMillis();
-        long last = lastSaveTime.get();
-        if (now - last >= SAVE_DEBOUNCE_MS) {
-            if (lastSaveTime.compareAndSet(last, now)) {
-                saveIndex();
-            }
         }
     }
 

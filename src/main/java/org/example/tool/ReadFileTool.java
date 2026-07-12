@@ -9,10 +9,12 @@ import java.util.List;
 public class ReadFileTool extends Tool {
 
     public ReadFileTool() {
-        super("read_file", "读取指定路径的文本文件内容。可用offset和limit读取大文件的指定区间",
+        super("read_file", "读取指定路径的文本文件内容。优先使用lineStart和lineEnd按行读取并显示行号，也可用offset和limit按字符读取",
                 new Param("path", "string", "文件路径", true),
                 new Param("offset", "integer", "起始字符位置（默认0）", false),
-                new Param("limit", "integer", "最大读取字符数（默认8000）", false));
+                new Param("limit", "integer", "最大读取字符数（默认8000）", false),
+                new Param("lineStart", "integer", "起始行号（从1开始）", false),
+                new Param("lineEnd", "integer", "结束行号（包含，最多读取500行）", false));
     }
 
     @Override
@@ -72,6 +74,12 @@ public class ReadFileTool extends Tool {
             return "不是普通文件: " + file.getAbsolutePath();
         }
 
+        if (args.has("lineStart") || args.has("lineEnd")) {
+            int lineStart = args.has("lineStart") ? args.get("lineStart").getAsInt() : 1;
+            int lineEnd = args.has("lineEnd") ? args.get("lineEnd").getAsInt() : lineStart + 199;
+            return readLines(file.toPath(), lineStart, lineEnd);
+        }
+
         Path filePath = Paths.get(file.getAbsolutePath());
         long totalLen = countChars(filePath);
         if (offset >= totalLen) {
@@ -100,6 +108,35 @@ public class ReadFileTool extends Tool {
             }
             return result;
         }
+    }
+
+    private String readLines(Path filePath, int lineStart, int lineEnd) throws IOException {
+        if (lineStart < 1) return "lineStart 必须大于等于 1";
+        if (lineEnd < lineStart) return "lineEnd 不能小于 lineStart";
+        lineEnd = Math.min(lineEnd, lineStart + 499);
+
+        StringBuilder result = new StringBuilder();
+        int lineNumber = 0;
+        boolean hasMore = false;
+        try (BufferedReader reader = Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (lineNumber < lineStart) continue;
+                if (lineNumber > lineEnd) {
+                    hasMore = true;
+                    break;
+                }
+                result.append(String.format("%6d | %s%n", lineNumber, line));
+            }
+        }
+        if (result.length() == 0) {
+            return "(文件共 " + lineNumber + " 行，起始行超出范围)";
+        }
+        if (hasMore) {
+            result.append("...(后续内容未显示，请提高 lineStart 继续读取)");
+        }
+        return result.toString().trim();
     }
 
     private long countChars(Path filePath) throws IOException {

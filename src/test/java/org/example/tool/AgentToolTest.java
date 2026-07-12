@@ -1,0 +1,137 @@
+package org.example.tool;
+
+import com.google.gson.JsonObject;
+import junit.framework.TestCase;
+import org.example.TerminalStart;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Stream;
+
+public class AgentToolTest extends TestCase {
+
+    public void testReadOnlyCommandClassification() {
+        assertTrue(RunCommandTool.isReadOnlyCommand("git status --short"));
+        assertTrue(RunCommandTool.isReadOnlyCommand("rg -n TODO src"));
+        assertTrue(RunCommandTool.isReadOnlyCommand("ls -la"));
+        assertFalse(RunCommandTool.isReadOnlyCommand("git status && rm -rf target"));
+        assertFalse(RunCommandTool.isReadOnlyCommand("mvn test"));
+        assertFalse(RunCommandTool.isReadOnlyCommand("echo changed > file.txt"));
+    }
+
+    public void testLineReadAndContentSearch() throws Exception {
+        Path workspace = Files.createTempDirectory("fish-code-tools-");
+        try {
+            Path source = workspace.resolve("Sample.java");
+            Files.write(source, ("class Sample {\n    String needle = \"found\";\n}\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            Files.write(workspace.resolve("ignored.txt"), "needle\n".getBytes(StandardCharsets.UTF_8));
+            TerminalStart.setCurrentCwd(workspace.toString());
+
+            JsonObject readArgs = new JsonObject();
+            readArgs.addProperty("path", "Sample.java");
+            readArgs.addProperty("lineStart", 2);
+            readArgs.addProperty("lineEnd", 2);
+            String readResult = new ReadFileTool().execute(readArgs);
+            assertTrue(readResult.contains("2 |     String needle"));
+
+            JsonObject searchArgs = new JsonObject();
+            searchArgs.addProperty("query", "needle");
+            searchArgs.addProperty("glob", "*.java");
+            String searchResult = new SearchTextTool().execute(searchArgs);
+            assertTrue(searchResult.contains("Sample.java:2:"));
+            assertFalse(searchResult.contains("ignored.txt"));
+        } finally {
+            TerminalStart.clearCurrentCwd();
+            try (Stream<Path> paths = Files.walk(workspace)) {
+                paths.sorted(Comparator.reverseOrder())
+                        .forEach(path -> {
+                            try {
+                                Files.deleteIfExists(path);
+                            } catch (Exception ignored) {
+                            }
+                        });
+            }
+        }
+    }
+
+    public void testGlobMatching() {
+        assertTrue(ToolUtils.globMatch("src/main/App.java", "**/*.java"));
+        assertTrue(ToolUtils.globMatch("App.java", "*.java"));
+        assertFalse(ToolUtils.globMatch("App.class", "*.java"));
+    }
+
+    @SuppressWarnings("unchecked")
+    public void testContextCharacterCountIncludesMessagesAndToolCalls() throws Exception {
+        TerminalStart agent = new TerminalStart("", "", "test", null);
+        int base = agent.getContextCharCount();
+        Field messagesField = TerminalStart.class.getDeclaredField("messages");
+        messagesField.setAccessible(true);
+        List<JsonObject> messages = (List<JsonObject>) messagesField.get(agent);
+
+        messages.add(message("user", "你好abc"));
+        JsonObject assistant = message("assistant", "完成");
+        com.google.gson.JsonArray calls = new com.google.gson.JsonArray();
+        JsonObject call = new JsonObject();
+        call.addProperty("name", "read_file");
+        calls.add(call);
+        assistant.add("tool_calls", calls);
+        messages.add(assistant);
+
+        assertEquals(base + "你好abc".length() + "完成".length() + calls.toString().length(),
+                agent.getContextCharCount());
+    }
+
+    @SuppressWarnings("unchecked")
+    public void testContextTrimKeepsToolTurnTogether() throws Exception {
+        TerminalStart agent = new TerminalStart("", "", "test", null);
+        Field messagesField = TerminalStart.class.getDeclaredField("messages");
+        messagesField.setAccessible(true);
+        List<JsonObject> messages = (List<JsonObject>) messagesField.get(agent);
+
+        messages.add(message("user", repeat('a', 25000)));
+        messages.add(message("assistant", repeat('b', 25000)));
+        messages.add(message("user", "current turn"));
+
+        JsonObject toolCallMessage = message("assistant", "");
+        com.google.gson.JsonArray calls = new com.google.gson.JsonArray();
+        JsonObject call = new JsonObject();
+        call.addProperty("id", "call-1");
+        call.addProperty("padding", repeat('c', 1000));
+        calls.add(call);
+        toolCallMessage.add("tool_calls", calls);
+        messages.add(toolCallMessage);
+
+        messages.add(message("tool", repeat('d', 70000)));
+
+        Method trim = TerminalStart.class.getDeclaredMethod("trimContextIfNeeded");
+        trim.setAccessible(true);
+        trim.invoke(agent);
+
+        assertEquals("system", messages.get(0).get("role").getAsString());
+        assertEquals("system", messages.get(1).get("role").getAsString());
+        assertEquals("user", messages.get(2).get("role").getAsString());
+        assertEquals("current turn", messages.get(2).get("content").getAsString());
+        assertEquals("assistant", messages.get(3).get("role").getAsString());
+        assertEquals("tool", messages.get(4).get("role").getAsString());
+    }
+
+    private static JsonObject message(String role, String content) {
+        JsonObject message = new JsonObject();
+        message.addProperty("role", role);
+        message.addProperty("content", content);
+        return message;
+    }
+
+    private static String repeat(char value, int count) {
+        char[] chars = new char[count];
+        Arrays.fill(chars, value);
+        return new String(chars);
+    }
+}

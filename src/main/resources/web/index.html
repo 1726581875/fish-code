@@ -34,7 +34,7 @@
 
         /* ================= 侧边栏 ================= */
         .sidebar {
-            width: 300px;
+            width: 272px;
             background: var(--bg-white);
             border-right: 1px solid var(--border-color);
             display: flex;
@@ -155,7 +155,7 @@
         }
         .cwd-picker-overlay.open { display: flex; }
         .cwd-picker {
-            width: 500px; max-height: 420px; background: var(--bg-white);
+            width: 620px; height: min(560px, calc(100vh - 48px)); background: var(--bg-white);
             border: 1px solid var(--border-color); border-radius: 10px;
             display: flex; flex-direction: column; overflow: hidden;
             box-shadow: 0 8px 30px rgba(0,0,0,0.18);
@@ -178,6 +178,16 @@
         .cwd-picker-list {
             flex: 1; overflow-y: auto; padding: 6px 0; min-height: 180px;
         }
+        .cwd-picker-shortcuts {
+            display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 14px;
+            border-bottom: 1px solid var(--border-light); background: var(--bg-white);
+        }
+        .cwd-shortcut {
+            border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-gray);
+            color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 5px 9px;
+            display: inline-flex; align-items: center; gap: 5px;
+        }
+        .cwd-shortcut:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
         .cwd-picker-item {
             padding: 7px 14px; font-size: 13px; color: var(--text-main);
             cursor: pointer; display: flex; align-items: center; gap: 8px;
@@ -198,8 +208,13 @@
         }
         .cwd-picker-footer {
             padding: 10px 14px; border-top: 1px solid var(--border-light);
-            display: flex; justify-content: flex-end;
+            display: flex; align-items: center; gap: 10px;
         }
+        .cwd-picker-selected {
+            flex: 1; min-width: 0; color: var(--text-secondary); font-size: 11px;
+            font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .cwd-hidden-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
         .cwd-picker-select-btn {
             padding: 6px 16px; font-size: 13px; font-weight: 500;
             background: var(--accent-blue); color: white; border: none;
@@ -217,10 +232,10 @@
         /* ================= 主内容 ================= */
         .main-content { flex: 1; display: flex; overflow: hidden; }
         .chat-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        .messages-container { flex: 1; overflow-y: auto; padding: 20px; background: var(--bg-body); scroll-behavior: smooth; }
+        .messages-container { flex: 1; overflow-y: auto; padding: 28px 28px 24px; background: #fbfbfa; scroll-behavior: smooth; }
 
         /* ================= 消息样式 ================= */
-        .message { margin-bottom: 16px; max-width: 860px; margin-left: auto; margin-right: auto; width: 100%; }
+        .message { margin-bottom: 22px; max-width: 920px; margin-left: auto; margin-right: auto; width: 100%; }
         .msg-header {
             display: flex; align-items: center; margin-bottom: 6px;
             font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
@@ -231,7 +246,7 @@
         .msg-body {
             background: var(--bg-white);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
+            border-radius: 10px;
             padding: 14px 16px;
             line-height: 1.7;
             font-size: 14px;
@@ -285,22 +300,14 @@
         .tool-content { padding: 0; max-height: 300px; overflow-y: auto; }
         .tool-content pre { margin: 0 !important; border-radius: 0 !important; border: none !important; }
 
-        /* ================= 终端 ================= */
-        .terminal-output {
-            background: #1b1b1b; color: #c9d1d9;
-            font-family: var(--font-mono); padding: 10px; font-size: 12px;
-        }
-        .terminal-output .success { color: #3fb950; }
-        .terminal-output .error { color: #f85149; }
-        .terminal-output .path { color: #58a6ff; }
-
         /* ================= 底部输入栏 ================= */
-        .input-area { padding: 10px 20px 8px; background: var(--bg-white); border-top: 1px solid var(--border-color); }
+        .input-area { padding: 10px 28px 12px; background: #fbfbfa; }
         .input-wrapper {
-            max-width: 860px; margin: 0 auto; position: relative;
+            max-width: 920px; margin: 0 auto; position: relative;
             background: var(--bg-white); border: 1px solid var(--border-color);
-            border-radius: 8px; display: flex; align-items: flex-end;
-            transition: border-color 0.15s;
+            border-radius: 14px; display: flex; align-items: flex-end;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            box-shadow: 0 5px 18px rgba(31,35,40,0.07);
         }
         .input-wrapper:focus-within { border-color: var(--accent-blue); box-shadow: 0 0 0 2px rgba(9,105,218,0.15); }
         textarea {
@@ -323,7 +330,7 @@
 
         /* ================= 工具栏 ================= */
         .input-toolbar {
-            max-width: 860px; margin: 6px auto 0;
+            max-width: 920px; margin: 7px auto 0;
             display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         }
         .toolbar-select {
@@ -344,25 +351,35 @@
         .mode-btn:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
         .mode-btn.active { background: #ddf4ff; border-color: var(--accent-blue); color: var(--accent-blue); }
 
-        /* ================= 右侧面板 ================= */
-        .right-panel {
-            width: 320px; background: var(--bg-white);
-            border-left: 1px solid var(--border-color);
-            display: flex; flex-direction: column; flex-shrink: 0;
-        }
-        .panel-header {
-            padding: 10px 14px; border-bottom: 1px solid var(--border-color);
-            font-size: 12px; font-weight: 600; color: var(--text-secondary);
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .panel-content { flex: 1; overflow-y: auto; padding: 10px; }
         .confirm-msg {
-            max-width: 860px; margin: 0 auto 16px; width: 100%;
+            max-width: 920px; margin: 0 auto 16px; width: 100%;
         }
         .ai-status-card {
             display: flex; align-items: center; gap: 10px;
             color: var(--text-secondary);
         }
+        .agent-response.pending .msg-body { min-height: 64px; }
+        .agent-response.streaming .msg-body { border-color: #b6d7ff; }
+        .agent-response .response-content:empty { display: none; }
+        .agent-response.has-content .response-status { display: none; }
+        .agent-response.has-content .msg-body { min-height: 0; }
+        .response-tools { display: none; margin: 10px 0 4px; border: 1px solid var(--border-light); border-radius: 8px; overflow: hidden; }
+        .response-tools.has-items { display: block; }
+        .response-tools .tool-item:last-child { border-bottom: none; }
+        .response-tools .tool-item { background: var(--bg-gray); }
+        .response-footer {
+            display: flex; align-items: center; gap: 10px; min-height: 24px;
+            margin-top: 7px; color: var(--text-muted); font-size: 11px;
+        }
+        .response-state { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+        .response-state .mini-state-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-blue); }
+        .response-state.running { color: var(--accent-blue); }
+        .response-state.running .mini-state-dot { animation: pulse 1.3s ease-in-out infinite; }
+        .response-state.done { color: var(--accent-green); }
+        .response-state.done .mini-state-dot { background: var(--accent-green); }
+        .response-state.stopped, .response-state.error { color: var(--accent-red); }
+        .response-state.stopped .mini-state-dot, .response-state.error .mini-state-dot { background: var(--accent-red); }
+        .response-footer-spacer { flex: 1; }
         .ai-status-icon {
             width: 26px; height: 26px; border-radius: 50%;
             background: #ddf4ff; color: var(--accent-blue);
@@ -432,6 +449,13 @@
             font-size: 12px; color: var(--accent-orange); font-weight: 500;
             padding: 0 10px; margin-left: 8px;
         }
+        .context-usage {
+            display: inline-flex; align-items: center; gap: 6px; margin-left: 8px;
+            color: var(--text-secondary); font-size: 11px; padding: 4px 8px;
+            border: 1px solid var(--border-light); border-radius: 999px; background: var(--bg-gray);
+            white-space: nowrap;
+        }
+        .context-usage i { color: var(--accent-blue); }
         .status-dot {
             width: 8px; height: 8px; border-radius: 50%;
             background: var(--accent-orange);
@@ -445,7 +469,6 @@
             0%, 80%, 100% { opacity: 0.25; }
             40% { opacity: 1; }
         }
-        @media (max-width: 1024px) { .right-panel { display: none; } }
         @media (max-width: 768px) {
             .sidebar { width: 0; display: none; }
         }
@@ -508,7 +531,6 @@
             display: inline-flex; align-items: center; justify-content: center; gap: 5px;
         }
         .mobile-panel-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
-        .mobile-close { display: none; }
         .mobile-overlay {
             display: none; position: fixed; inset: 0; z-index: 900;
             background: rgba(36,41,47,0.38);
@@ -534,15 +556,11 @@
         .msg-body img { max-width: 100%; border-radius: 6px; }
         .msg-body pre { position: relative; }
         .msg-body table { display: block; overflow-x: auto; }
-        .action-btn.stop { background: var(--accent-red); color: white; display: none; }
+        .action-btn.stop { background: transparent; color: var(--accent-red); display: none; }
         .action-btn.stop:hover { background: #a40e26; color: white; }
-        .input-area.processing .action-btn.send { display: none; }
         .input-area.processing .action-btn.stop { display: flex; }
-        .input-area.processing textarea, .input-area.processing .attach-btn {
-            opacity: 0.58;
-        }
         .attachment-strip {
-            max-width: 860px; margin: 6px auto 0;
+            max-width: 920px; margin: 6px auto 0;
             display: none; flex-wrap: wrap; gap: 6px;
         }
         .attachment-strip.has-items { display: flex; }
@@ -557,6 +575,25 @@
             cursor: pointer; width: 16px; height: 16px; display: inline-flex;
             align-items: center; justify-content: center;
         }
+        .queue-bar {
+            max-width: 920px; margin: 0 auto 7px; display: none;
+            align-items: center; gap: 8px; color: var(--text-secondary);
+            font-size: 12px; padding: 7px 10px; border: 1px solid #c9d8ee;
+            background: #f4f8ff; border-radius: 8px;
+        }
+        .queue-bar.show { display: flex; }
+        .queue-bar i { color: var(--accent-blue); }
+        .queue-bar .queue-summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .queue-clear {
+            border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+            font-size: 12px; padding: 2px 5px; border-radius: 4px;
+        }
+        .queue-clear:hover { color: var(--accent-red); background: #fff1f1; }
+        .queued-badge {
+            display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+            color: var(--accent-blue); font-size: 11px; font-weight: 500;
+        }
+        .message.user.queued { opacity: 0.76; }
         .toolbar-spacer { flex: 1; }
         .tool-item-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
         .tool-mini-btn {
@@ -588,16 +625,7 @@
         .quick-action:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
 
         @media (max-width: 1024px) {
-            .right-panel {
-                display: flex;
-                position: fixed; top: 0; right: -340px; bottom: 0; z-index: 1000;
-                width: min(340px, 92vw);
-                box-shadow: -12px 0 32px rgba(31,35,40,0.18);
-                transition: right 0.18s ease;
-            }
-            .right-panel.open { right: 0; }
             .mobile-panel-bar { display: flex; }
-            .mobile-close { display: inline-flex; }
         }
         @media (max-width: 768px) {
             body { min-width: 0; }
@@ -620,7 +648,7 @@
             .message { margin-bottom: 12px; }
             .message.user .msg-body { max-width: 92%; }
             .input-area { padding: 8px 10px; }
-            .input-wrapper, .input-toolbar, .attachment-strip { max-width: none; }
+            .input-wrapper, .input-toolbar, .attachment-strip, .queue-bar { max-width: none; }
             .input-toolbar { gap: 6px; }
             .toolbar-select { max-width: 145px; }
             .mode-btn { padding: 4px 9px; }
@@ -667,6 +695,9 @@
         <div id="statusIndicator" class="status-indicator" style="display:none;">
             <span class="status-dot"></span>执行中
         </div>
+        <div id="contextUsage" class="context-usage" title="包含系统提示、对话、工具调用和工具结果">
+            <i class="fas fa-gauge-high"></i><span>上下文 0 字符</span>
+        </div>
         <div style="flex:1;"></div>
         <div class="cwd-wrapper">
             <i class="fas fa-folder-open" style="font-size:11px; color:var(--text-muted);"></i>
@@ -688,8 +719,6 @@
     </div>
     <div class="mobile-panel-bar">
         <button class="mobile-panel-btn" onclick="openMobilePanel('sessions')"><i class="fas fa-list"></i>会话</button>
-        <button class="mobile-panel-btn" onclick="openMobilePanel('tools')"><i class="fas fa-wrench"></i>工具</button>
-        <button class="mobile-panel-btn" onclick="openMobilePanel('logs')"><i class="fas fa-clock-rotate-left"></i>日志</button>
     </div>
 
     <div class="main-content">
@@ -712,6 +741,11 @@
             <button id="newMessagesBtn" class="new-messages-btn" onclick="jumpToLatest()"><i class="fas fa-arrow-down"></i>新回复</button>
 
             <div class="input-area">
+                <div id="queueBar" class="queue-bar">
+                    <i class="fas fa-layer-group"></i>
+                    <span id="queueSummary" class="queue-summary"></span>
+                    <button class="queue-clear" onclick="clearQueuedMessages()">清空排队</button>
+                </div>
                 <div id="attachmentStrip" class="attachment-strip"></div>
                 <div class="input-wrapper">
                     <textarea id="userInput" rows="1" placeholder="输入代码需求... (Enter 发送, Shift+Enter 换行)"></textarea>
@@ -736,31 +770,6 @@
             </div>
         </div>
 
-        <div class="right-panel" id="rightPanel">
-            <div class="panel-header">
-                <span><i class="fas fa-terminal" style="margin-right:6px;"></i>终端 & 输出</span>
-                <button class="sidebar-action mobile-close" title="关闭" onclick="closeMobilePanels()"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="panel-content" id="terminalPanel">
-                <div class="terminal-output">
-                    <div><span class="path">~/project</span> $ <span style="color:#8b949e">等待命令...</span></div>
-                </div>
-            </div>
-            <div class="panel-header" style="border-top: 1px solid var(--border-color);">
-                <span><i class="fas fa-wrench" style="margin-right:6px;"></i>工具调用</span>
-                <span id="toolCount" style="font-size:11px; color:var(--text-muted);">0</span>
-            </div>
-            <div class="panel-content" id="toolPanel" style="padding:0;">
-                <div id="toolLog"></div>
-                <div id="toolLogEmpty" style="font-size:12px; color:var(--text-muted); padding:10px;">暂无工具调用</div>
-            </div>
-            <div class="panel-header" style="border-top: 1px solid var(--border-color);">
-                <span><i class="fas fa-clock-rotate-left" style="margin-right:6px;"></i>操作日志</span>
-            </div>
-            <div class="panel-content" id="agentLog">
-                <div style="font-size:12px; color:var(--text-muted); padding:4px;">暂无操作记录</div>
-            </div>
-        </div>
     </div>
 </div>
 <div class="mobile-overlay" id="mobileOverlay" onclick="closeMobilePanels()"></div>
@@ -775,8 +784,6 @@
     var token = localStorage.getItem('fish_token') || '';
     var messagesContainer = document.getElementById('messagesContainer');
     var userInput = document.getElementById('userInput');
-    var terminalPanel = document.getElementById('terminalPanel');
-    var agentLog = document.getElementById('agentLog');
     var sessionSearch = document.getElementById('sessionSearch');
     var newMessagesBtn = document.getElementById('newMessagesBtn');
     var attachmentStrip = document.getElementById('attachmentStrip');
@@ -796,6 +803,10 @@
     var stopRequestedByUser = false;
     var shouldStickToBottom = true;
     var pendingAttachments = [];
+    var queuedMessages = [];
+    var activeResponseMessage = null;
+    var contextCharCount = 0;
+    var pickerShowHidden = false;
     var projectTreePath = '';
     var toolItemsByKey = {};
 
@@ -839,6 +850,7 @@
         resetRuntimePanels();
         fetchJson('/mode').then(function (d) {
             if (d.mode) activateMode(d.mode);
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
         }).catch(function () {});
         loadModels();
         loadCwd();
@@ -924,6 +936,7 @@
                         loadSessions();
                         loadProjectTree('');
                     }
+                    if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
                 }).catch(function () {
                     loadServerCwd();
                 });
@@ -940,6 +953,7 @@
             saveLastCwd(currentCwd);
             loadSessions();
             loadProjectTree('');
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
         }).catch(function (err) {
             addAgentLog('目录读取失败', err.message, 'error');
         });
@@ -960,6 +974,7 @@
                 markCwdClean();
                 saveLastCwd(currentCwd);
                 saveCwdToHistory(currentCwd);
+                if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
                 addAgentLog('工作目录', currentCwd, 'success');
                 loadSessions();
                 loadProjectTree('');
@@ -1061,7 +1076,9 @@
                 if (item.type === 'dir') {
                     loadProjectTree(item.path || '');
                 } else {
-                    userInput.value = '请阅读并分析这个文件：' + (item.path || item.name);
+                    var fileRef = '@' + (item.path || item.name);
+                    var current = userInput.value.trim();
+                    userInput.value = current ? current + '\n' + fileRef : fileRef;
                     autoResizeInput.call(userInput);
                     userInput.focus();
                 }
@@ -1073,6 +1090,7 @@
     function loadSessions() {
         fetchJson('/sessions').then(function (d) {
             currentSessionId = d.currentSessionId || currentSessionId || '';
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
             renderSessions(d.sessions || []);
         }).catch(function () {});
     }
@@ -1181,6 +1199,7 @@
                 }
                 resetRuntimePanels();
                 renderHistoryMessages(d.messages || []);
+                if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
                 addAgentLog('恢复会话', title, 'success');
                 closeMobilePanels();
                 loadSessions();
@@ -1197,8 +1216,10 @@
             var role = msg.role || '';
             if (role === 'system' || role === 'tool') return;
             var content = msg.content;
-            if ((!content || content === 'null') && msg.tool_calls) {
+            if (msg.tool_calls) {
                 addHistoryToolCalls(msg.tool_calls);
+            }
+            if ((!content || content === 'null') && msg.tool_calls) {
                 rendered++;
                 return;
             }
@@ -1234,24 +1255,87 @@
     }
 
     function sendMessage() {
-        var text = composeOutgoingMessage();
-        if (!text || isProcessing) return;
+        var draft = captureComposerDraft();
+        if (!draft) return;
+        clearComposer();
+        if (isProcessing) {
+            queueMessage(draft);
+            return;
+        }
+        startMessageRequest(draft);
+    }
+
+    function captureComposerDraft() {
+        var visibleText = userInput.value.trim();
+        var attachments = pendingAttachments.slice();
+        var text = composeOutgoingMessage(visibleText, attachments);
+        if (!text) return null;
+        var visibleMessage = visibleText || '请阅读这些附件内容。';
+        if (attachments.length) {
+            visibleMessage += '\n\n附件：' + attachments.map(function (file) { return file.name; }).join('、');
+        }
+        return { text: text, visibleMessage: visibleMessage, messageDiv: null };
+    }
+
+    function clearComposer() {
+        userInput.value = '';
+        userInput.style.height = 'auto';
+        clearAttachments();
+    }
+
+    function queueMessage(draft) {
+        draft.messageDiv = addMessage('user', draft.visibleMessage, true);
+        draft.messageDiv.classList.add('queued');
+        var badge = document.createElement('div');
+        badge.className = 'queued-badge';
+        badge.innerHTML = '<i class="fas fa-clock"></i><span>等待当前回复完成</span>';
+        draft.messageDiv.appendChild(badge);
+        queuedMessages.push(draft);
+        renderQueueBar();
+    }
+
+    function renderQueueBar() {
+        var bar = document.getElementById('queueBar');
+        var summary = document.getElementById('queueSummary');
+        bar.classList.toggle('show', queuedMessages.length > 0);
+        if (!queuedMessages.length) {
+            summary.textContent = '';
+            return;
+        }
+        var first = queuedMessages[0].visibleMessage.replace(/\s+/g, ' ').trim();
+        if (first.length > 56) first = first.substring(0, 56) + '...';
+        summary.textContent = queuedMessages.length + ' 条追加提问等待处理 · ' + first;
+    }
+
+    function clearQueuedMessages() {
+        queuedMessages.forEach(function (draft) {
+            if (draft.messageDiv) draft.messageDiv.remove();
+        });
+        queuedMessages = [];
+        renderQueueBar();
+    }
+
+    function startMessageRequest(draft) {
         isProcessing = true;
         stopRequestedByUser = false;
         currentAbortController = window.AbortController ? new AbortController() : null;
         setProcessingUI(true);
-        addMessage('user', text, true);
-        userInput.value = '';
-        userInput.style.height = 'auto';
-        clearAttachments();
-        resetRuntimePanels('正在连接模型...');
+        if (draft.messageDiv) {
+            draft.messageDiv.classList.remove('queued');
+            var queuedBadge = draft.messageDiv.querySelector('.queued-badge');
+            if (queuedBadge) queuedBadge.remove();
+        } else {
+            draft.messageDiv = addMessage('user', draft.visibleMessage, true);
+        }
+        resetRuntimePanels();
         hideConfirmPanel();
 
-        var loader = addThinkingMessage('AI 正在思考', '分析需求，准备执行...');
-        var msgDiv = null;
-        var contentDiv = null;
+        var msgDiv = createActiveAssistantMsg('AI 正在思考', '分析需求，准备执行...');
+        var contentDiv = msgDiv.querySelector('.response-content');
+        activeResponseMessage = msgDiv;
         var gotFirstToken = false;
-        var chatPayload = { message: text, stream: true };
+        var terminalEventReceived = false;
+        var chatPayload = { message: draft.text, stream: true };
         if (selectedModel) chatPayload.model = selectedModel;
         if (currentCwd) chatPayload.cwd = currentCwd;
 
@@ -1280,41 +1364,39 @@
                                 if (evt.type === 'token') {
                                     if (!gotFirstToken) {
                                         gotFirstToken = true;
-                                        updateThinkingMessage('AI 正在回复', '正在生成回答...');
-                                        msgDiv = createAssistantMsg();
-                                        contentDiv = msgDiv.querySelector('.msg-body');
+                                        beginActiveResponse(msgDiv);
                                     }
                                     appendStreamToken(contentDiv, evt.content);
                                     scrollToBottom(false);
                                 } else if (evt.type === 'tool_call') {
-                                    updateThinkingMessage(toolStatusTitle(evt.status), evt.name || '工具调用中');
+                                    updateActiveResponseStatus(toolStatusTitle(evt.status), evt.name || '工具调用中');
+                                    setResponseState(msgDiv, 'running', evt.status === 'done' ? '继续处理中' : '执行工具中');
                                     addToolToPanel(evt.name || 'tool_call', evt.args || '', evt.status || 'running', evt.result || null);
                                     addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name || '工具调用', evt.status === 'done' ? 'success' : 'info');
-                                    if (evt.status === 'done' && evt.result) updateTerminalFromTool(evt.name || '', evt.result);
                                 } else if (evt.type === 'confirm_required') {
-                                    updateThinkingMessage('等待你的确认', evt.name || '工具调用需要确认');
+                                    updateActiveResponseStatus('等待你的确认', evt.name || '工具调用需要确认');
+                                    setResponseState(msgDiv, 'running', '等待确认');
                                     showConfirmPanel(evt.confirmKey, evt.name || '工具调用', evt.args || '');
                                 } else if (evt.type === 'done') {
-                                    removeThinkingMessage(loader);
-                                    if (!msgDiv && evt.reply) {
-                                        msgDiv = createAssistantMsg();
-                                        contentDiv = msgDiv.querySelector('.msg-body');
+                                    terminalEventReceived = true;
+                                    if (!gotFirstToken && evt.reply) {
                                         contentDiv.setAttribute('data-raw', evt.reply);
+                                        beginActiveResponse(msgDiv);
                                     }
-                                    if (msgDiv && contentDiv) {
+                                    if (contentDiv) {
                                         flushStreamRender(contentDiv);
-                                        addReplyMeta(msgDiv, evt.durationMs, evt.mode);
+                                        addReplyMeta(msgDiv, evt.durationMs, evt.mode, evt.replyChars);
                                     }
+                                    completeActiveResponse(msgDiv);
+                                    if (typeof evt.contextChars === 'number') updateContextUsage(evt.contextChars);
                                     addAgentLog('完成', (evt.durationMs || 0) + 'ms', 'success');
                                     if (evt.sessionId) currentSessionId = evt.sessionId;
                                     loadSessions();
                                 } else if (evt.type === 'error') {
-                                    removeThinkingMessage(loader);
-                                    if (!msgDiv) {
-                                        msgDiv = createAssistantMsg();
-                                        contentDiv = msgDiv.querySelector('.msg-body');
-                                    }
+                                    terminalEventReceived = true;
+                                    beginActiveResponse(msgDiv);
                                     appendError(contentDiv, evt.error || '未知错误');
+                                    completeActiveResponse(msgDiv, 'error', '生成失败');
                                     addAgentLog('错误', evt.error || '未知错误', 'error');
                                 }
                             } catch (e) {}
@@ -1325,16 +1407,27 @@
                 return process();
             })
             .then(function () {
+                if (!terminalEventReceived) {
+                    beginActiveResponse(msgDiv);
+                    appendResponseNote(contentDiv, '连接已结束，当前回复可能不完整');
+                    completeActiveResponse(msgDiv, 'error', '输出中断');
+                }
                 finishProcessing();
             })
             .catch(function (err) {
-                removeThinkingMessage(loader);
+                beginActiveResponse(msgDiv);
                 if (stopRequestedByUser || err.name === 'AbortError') {
-                    addMessage('agent', '已停止当前回复。', false);
+                    if (!(contentDiv.getAttribute('data-raw') || '').trim()) {
+                        contentDiv.setAttribute('data-raw', '已停止当前回复。');
+                        flushStreamRender(contentDiv);
+                    } else {
+                        appendResponseNote(contentDiv, '已停止生成');
+                    }
+                    completeActiveResponse(msgDiv, 'stopped', '已停止');
                     addAgentLog('已停止', '当前回复已取消', 'info');
                 } else {
-                    var msg = createAssistantMsg();
-                    appendError(msg.querySelector('.msg-body'), '网络错误: ' + err.message);
+                    appendError(contentDiv, '网络错误: ' + err.message);
+                    completeActiveResponse(msgDiv, 'error', '生成失败');
                     addAgentLog('网络错误', err.message, 'error');
                 }
                 finishProcessing();
@@ -1344,28 +1437,34 @@
     function stopGeneration() {
         if (!isProcessing) return;
         stopRequestedByUser = true;
-        updateThinkingMessage('正在停止', '正在取消当前请求...');
+        updateActiveResponseStatus('正在停止', '正在取消当前请求...');
+        setResponseState(activeResponseMessage, 'stopped', '正在停止');
         authFetch('/cancel', { method: 'POST' }).catch(function () {});
         if (currentAbortController) currentAbortController.abort();
     }
 
     function finishProcessing() {
-        isProcessing = false;
         currentAbortController = null;
+        activeResponseMessage = null;
+        if (queuedMessages.length) {
+            var next = queuedMessages.shift();
+            renderQueueBar();
+            window.setTimeout(function () { startMessageRequest(next); }, 60);
+            return;
+        }
+        isProcessing = false;
         setProcessingUI(false);
     }
 
-    function composeOutgoingMessage() {
-        var text = userInput.value.trim();
-        if (!pendingAttachments.length) return text;
-        var blocks = pendingAttachments.map(function (file) {
+    function composeOutgoingMessage(text, attachments) {
+        if (!attachments.length) return text;
+        var blocks = attachments.map(function (file) {
             return '\n\n附件：' + file.name + '\n```' + file.lang + '\n' + file.content + '\n```';
         }).join('');
         return (text || '请阅读这些附件内容。') + blocks;
     }
 
     function openFilePicker() {
-        if (isProcessing) return;
         fileInput.click();
     }
 
@@ -1446,21 +1545,109 @@
         div.innerHTML =
             '<div class="msg-header ' + role + '">' +
             '<i class="fas ' + (isUser ? 'fa-user' : 'fa-robot') + '"></i> ' + (isUser ? 'You' : 'Code Agent') +
-            '</div><div class="msg-body">' + renderMarkdown(content) + '</div>';
+            '</div><div class="msg-body">' + renderMarkdown(content) + '</div>' +
+            (isUser ? '' : buildResponseFooter('done', '已完成', String(content || '').length, ''));
         messagesContainer.appendChild(div);
         highlightCode(div);
         scrollToBottom(!!forceScroll || isUser);
+        return div;
     }
 
-    function createAssistantMsg() {
+    function createActiveAssistantMsg(title, subtitle) {
         var empty = messagesContainer.querySelector('.welcome-msg');
         if (empty) empty.remove();
         var div = document.createElement('div');
-        div.className = 'message agent';
-        div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div><div class="msg-body"></div>';
+        div.className = 'message agent agent-response pending';
+        div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
+            '<div class="msg-body"><div class="response-status ai-status-card">' +
+            '<div class="ai-status-icon"><i class="fas fa-spinner spinner"></i></div>' +
+            '<div class="ai-status-main"><div class="ai-status-title"></div><div class="ai-status-sub"></div></div>' +
+            '</div><div class="response-tools"></div><div class="response-content"></div></div>' +
+            buildResponseFooter('running', '处理中', 0, '');
         messagesContainer.appendChild(div);
+        activeResponseMessage = div;
+        updateActiveResponseStatus(title, subtitle);
         scrollToBottom(false);
         return div;
+    }
+
+    function beginActiveResponse(msgDiv) {
+        if (!msgDiv) return;
+        msgDiv.classList.remove('pending');
+        msgDiv.classList.add('streaming', 'has-content');
+        setResponseState(msgDiv, 'running', '生成中');
+    }
+
+    function completeActiveResponse(msgDiv, state, label) {
+        if (!msgDiv) return;
+        msgDiv.classList.remove('pending', 'streaming');
+        var content = msgDiv.querySelector('.response-content');
+        if ((content.getAttribute('data-raw') || '').trim() || content.children.length) {
+            msgDiv.classList.add('has-content');
+        } else {
+            var icon = msgDiv.querySelector('.ai-status-icon');
+            var title = msgDiv.querySelector('.ai-status-title');
+            var subtitle = msgDiv.querySelector('.ai-status-sub');
+            if (icon) icon.innerHTML = '<i class="fas fa-check"></i>';
+            if (title) title.textContent = '已完成';
+            if (subtitle) subtitle.textContent = '';
+        }
+        setResponseState(msgDiv, state || 'done', label || '已完成');
+        updateResponseCharCount(msgDiv);
+    }
+
+    function updateActiveResponseStatus(title, subtitle) {
+        var el = activeResponseMessage;
+        if (!el) return;
+        var titleEl = el.querySelector('.ai-status-title');
+        var subEl = el.querySelector('.ai-status-sub');
+        if (titleEl) titleEl.innerHTML = escapeHtml(title || '处理中') + '<span class="ai-status-dots"><span>.</span><span>.</span><span>.</span></span>';
+        if (subEl) subEl.textContent = subtitle || '';
+        scrollToBottom(false);
+    }
+
+    function buildResponseFooter(state, label, charCount, meta) {
+        return '<div class="response-footer">' +
+            '<span class="response-state ' + escapeAttr(state) + '"><span class="mini-state-dot"></span><span class="response-state-label">' + escapeHtml(label) + '</span></span>' +
+            '<span class="response-footer-spacer"></span>' +
+            '<span class="response-char-count">本次回复 ' + formatCharCount(charCount) + ' 字符</span>' +
+            '<span class="response-meta">' + escapeHtml(meta || '') + '</span></div>';
+    }
+
+    function setResponseState(msgDiv, state, label) {
+        if (!msgDiv) return;
+        var stateEl = msgDiv.querySelector('.response-state');
+        if (!stateEl) return;
+        stateEl.className = 'response-state ' + state;
+        var labelEl = stateEl.querySelector('.response-state-label');
+        if (labelEl) labelEl.textContent = label;
+    }
+
+    function updateResponseCharCount(msgDiv, explicitCount) {
+        if (!msgDiv) return;
+        var countEl = msgDiv.querySelector('.response-char-count');
+        if (!countEl) return;
+        var content = msgDiv.querySelector('.response-content');
+        var count = typeof explicitCount === 'number' ? explicitCount : ((content && content.getAttribute('data-raw')) || '').length;
+        countEl.textContent = '本次回复 ' + formatCharCount(count) + ' 字符';
+    }
+
+    function formatCharCount(value) {
+        var number = Math.max(0, Number(value) || 0);
+        return number.toLocaleString('zh-CN');
+    }
+
+    function updateContextUsage(value) {
+        contextCharCount = Math.max(0, Number(value) || 0);
+        var el = document.getElementById('contextUsage');
+        if (el) el.querySelector('span').textContent = '上下文 ' + formatCharCount(contextCharCount) + ' 字符';
+    }
+
+    function appendResponseNote(contentDiv, text) {
+        var note = document.createElement('div');
+        note.style.cssText = 'font-size:11px;color:var(--text-muted);margin-top:8px;';
+        note.textContent = text;
+        contentDiv.appendChild(note);
     }
 
     function appendStreamToken(contentDiv, text) {
@@ -1479,6 +1666,7 @@
         var raw = contentDiv.getAttribute('data-raw') || contentDiv.textContent || '';
         contentDiv.innerHTML = renderMarkdown(raw);
         highlightCode(contentDiv);
+        updateResponseCharCount(contentDiv.closest('.agent-response'));
     }
 
     function appendError(contentDiv, text) {
@@ -1489,48 +1677,10 @@
         scrollToBottom(false);
     }
 
-    function addReplyMeta(msgDiv, durationMs, mode) {
-        if (msgDiv.querySelector('.reply-meta')) return;
-        var meta = document.createElement('div');
-        meta.className = 'reply-meta';
-        meta.style.cssText = 'font-size:11px; color:var(--text-muted); margin-top:8px;';
-        meta.textContent = (durationMs || 0) + 'ms | mode: ' + (mode || currentMode);
-        msgDiv.appendChild(meta);
-    }
-
-    function addThinkingMessage(title, subtitle) {
-        var div = document.createElement('div');
-        div.className = 'message agent';
-        div.id = 'thinking-msg';
-        div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
-            '<div class="msg-body"><div class="ai-status-card">' +
-            '<div class="ai-status-icon"><i class="fas fa-spinner spinner"></i></div>' +
-            '<div class="ai-status-main">' +
-            '<div class="ai-status-title">' + escapeHtml(title) + '<span class="ai-status-dots"><span>.</span><span>.</span><span>.</span></span></div>' +
-            '<div class="ai-status-sub">' + escapeHtml(subtitle || '') + '</div>' +
-            '</div></div></div>';
-        messagesContainer.appendChild(div);
-        scrollToBottom(false);
-        return div;
-    }
-
-    function updateThinkingMessage(title, subtitle) {
-        var el = document.getElementById('thinking-msg');
-        if (!el) {
-            addThinkingMessage(title, subtitle);
-            return;
-        }
-        var titleEl = el.querySelector('.ai-status-title');
-        var subEl = el.querySelector('.ai-status-sub');
-        if (titleEl) titleEl.innerHTML = escapeHtml(title) + '<span class="ai-status-dots"><span>.</span><span>.</span><span>.</span></span>';
-        if (subEl) subEl.textContent = subtitle || '';
-        scrollToBottom(false);
-    }
-
-    function removeThinkingMessage(el) {
-        if (el) el.remove();
-        var e = document.getElementById('thinking-msg');
-        if (e) e.remove();
+    function addReplyMeta(msgDiv, durationMs, mode, replyChars) {
+        var meta = msgDiv.querySelector('.response-meta');
+        if (meta) meta.textContent = (durationMs || 0) + 'ms · ' + (mode || currentMode);
+        updateResponseCharCount(msgDiv, replyChars);
     }
 
     function toolStatusTitle(status) {
@@ -1541,7 +1691,10 @@
     }
 
     function addToolToPanel(name, args, status, result) {
-        document.getElementById('toolLogEmpty').style.display = 'none';
+        if (!activeResponseMessage) return;
+        var toolLog = activeResponseMessage.querySelector('.response-tools');
+        if (!toolLog) return;
+        toolLog.classList.add('has-items');
         var fullArgs = String(args || '');
         var shortArgs = fullArgs.length > 140 ? fullArgs.substring(0, 140) + '...' : fullArgs;
         var statusLabel = status === 'done' ? '完成' : status === 'rejected' ? '已拒绝' : status === 'confirming' ? '待确认' : '执行中';
@@ -1558,7 +1711,6 @@
         }
 
         toolCallCount++;
-        document.getElementById('toolCount').textContent = toolCallCount;
         var div = document.createElement('div');
         div.className = 'tool-item';
         div.id = 'tool-item-' + toolCallCount;
@@ -1595,11 +1747,9 @@
         resultEl.textContent = result ? formatToolResult(result) : '';
         div.appendChild(resultEl);
 
-        var toolLog = document.getElementById('toolLog');
         toolLog.appendChild(div);
         toolItemsByKey[key] = { div: div, statusEl: statusEl, argsEl: argsEl, resultEl: resultEl, resultText: resultEl.textContent };
-        var panel = document.getElementById('toolPanel');
-        panel.scrollTop = panel.scrollHeight;
+        scrollToBottom(false);
     }
 
     function formatToolResult(result) {
@@ -1617,14 +1767,6 @@
             if (result.error) parts.push('error: ' + result.error);
         }
         return parts.filter(Boolean).join('\n');
-    }
-
-    function updateTerminalFromTool(name, result) {
-        if (!result || result.type !== 'command') return;
-        var output = result.output || '(无输出)';
-        terminalPanel.innerHTML = '<div class="terminal-output"><div><span class="path">' + escapeHtml(result.cwd || currentCwd || '~/project') +
-            '</span> $ ' + escapeHtml(result.command || name) + '</div><pre style="white-space:pre-wrap;margin-top:8px;">' +
-            escapeHtml(output) + '</pre></div>';
     }
 
     function makeMiniButton(icon, title, handler) {
@@ -1660,6 +1802,7 @@
             '<div class="confirm-msg-args">' + escapeHtml(argsShort) + '</div>' +
             '<div class="confirm-msg-btns">' +
             '<button class="confirm-btn confirm-btn-approve" onclick="approveConfirm(\'' + escapeAttr(confirmKey) + '\', true)">允许</button>' +
+            '<button class="confirm-btn confirm-btn-approveAll" onclick="approveConfirmAll(\'' + escapeAttr(confirmKey) + '\')">本次任务全部允许</button>' +
             '<button class="confirm-btn confirm-btn-reject" onclick="approveConfirm(\'' + escapeAttr(confirmKey) + '\', false)">拒绝</button>' +
             '</div></div>';
         messagesContainer.appendChild(div);
@@ -1707,32 +1850,10 @@
     }
 
     function addAgentLog(title, detail, type) {
-        var div = document.createElement('div');
-        var c = type === 'success' ? 'var(--accent-green)' : type === 'error' ? 'var(--accent-red)' : 'var(--accent-blue)';
-        var ic = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-times-circle' : 'fa-circle-info';
-        var t = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        div.style.cssText = 'font-size:12px;padding:5px 0;border-bottom:1px solid var(--border-light);';
-        div.innerHTML = '<span style="color:var(--text-muted);">' + t + '</span> <i class="fas ' + ic + '" style="color:' + c + ';margin:0 5px;"></i>';
-        var titleEl = document.createElement('span');
-        titleEl.style.color = 'var(--text-main)';
-        titleEl.textContent = title || '';
-        div.appendChild(titleEl);
-        div.appendChild(document.createTextNode(' '));
-        var detailEl = document.createElement('span');
-        detailEl.style.color = 'var(--text-secondary)';
-        detailEl.textContent = detail || '';
-        div.appendChild(detailEl);
-        if (agentLog.textContent === '暂无操作记录') agentLog.innerHTML = '';
-        agentLog.appendChild(div);
-        agentLog.scrollTop = agentLog.scrollHeight;
+        // 执行过程已收敛到当前 AI 消息中；保留调用入口，避免业务分支重复处理提示。
     }
 
-    function resetRuntimePanels(statusText) {
-        terminalPanel.innerHTML = '<div class="terminal-output"><div><span class="path">' + escapeHtml(currentCwd || '~/project') + '</span> $ <span style="color:#8b949e">' + escapeHtml(statusText || '等待命令...') + '</span></div></div>';
-        agentLog.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:4px;">暂无操作记录</div>';
-        document.getElementById('toolLog').innerHTML = '';
-        document.getElementById('toolLogEmpty').style.display = '';
-        document.getElementById('toolCount').textContent = '0';
+    function resetRuntimePanels() {
         toolCallCount = 0;
         toolItemsByKey = {};
     }
@@ -1742,13 +1863,14 @@
             addAgentLog('暂不能新建', 'Agent 执行中', 'info');
             return;
         }
-        fetchJson('/sessions', { method: 'POST', body: JSON.stringify({ action: 'new' }) }).then(function () {
+        fetchJson('/sessions', { method: 'POST', body: JSON.stringify({ action: 'new' }) }).then(function (d) {
             messagesContainer.innerHTML = '<div class="message agent welcome-msg"><div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
                 '<div class="msg-body">新会话已创建。请输入你的编程需求。</div></div>';
             resetRuntimePanels();
             hideConfirmPanel();
             addAgentLog('新会话', '已创建', 'success');
             currentSessionId = '';
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
             closeMobilePanels();
             loadSessions();
             jumpToLatest();
@@ -1760,10 +1882,11 @@
     function clearCurrentSession() {
         if (isProcessing) return;
         if (!confirm('确定清空当前会话上下文吗？历史会话文件不会被删除。')) return;
-        fetchJson('/sessions', { method: 'POST', body: JSON.stringify({ action: 'clear' }) }).then(function () {
+        fetchJson('/sessions', { method: 'POST', body: JSON.stringify({ action: 'clear' }) }).then(function (d) {
             messagesContainer.innerHTML = '<div class="message agent welcome-msg"><div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
                 '<div class="msg-body">当前会话上下文已清空。</div></div>';
             currentSessionId = '';
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
             resetRuntimePanels();
             addAgentLog('已清空', '当前会话上下文', 'success');
             loadSessions();
@@ -1807,6 +1930,7 @@
         if (isProcessing) return;
         fetchJson('/mode', { method: 'POST', body: JSON.stringify({ mode: m }) }).then(function (d) {
             activateMode(d.mode || m);
+            if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
             addAgentLog('模式切换', d.mode || m, 'info');
         }).catch(function (err) {
             addAgentLog('模式切换失败', err.message, 'error');
@@ -1832,36 +1956,42 @@
     function openCwdPicker() {
         if (isProcessing) return;
         pickerCurrentPath = currentCwd || '';
+        pickerShowHidden = false;
+        document.getElementById('cwdShowHidden').checked = false;
         document.getElementById('cwdPickerOverlay').classList.add('open');
-        var history = getCwdHistory();
-        if (history.length > 0) {
-            loadCwdPickerHistory(history);
-        } else {
-            loadCwdPickerDirs(pickerCurrentPath);
+        loadCwdPickerDirs(pickerCurrentPath);
+    }
+
+    function makeCwdShortcut(label, path, icon) {
+        if (!path) return null;
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'cwd-shortcut';
+        button.title = path;
+        button.innerHTML = '<i class="fas ' + icon + '"></i><span></span>';
+        button.querySelector('span').textContent = label;
+        button.onclick = function () { loadCwdPickerDirs(path); };
+        return button;
+    }
+
+    function renderCwdShortcuts(data) {
+        var host = document.getElementById('cwdPickerShortcuts');
+        host.innerHTML = '';
+        var seen = {};
+        function append(label, path, icon) {
+            if (!path || seen[path]) return;
+            seen[path] = true;
+            var button = makeCwdShortcut(label, path, icon);
+            if (button) host.appendChild(button);
         }
-    }
-
-    function loadCwdPickerHistory(history) {
-        var listEl = document.getElementById('cwdPickerList');
-        var crumbEl = document.getElementById('cwdPickerBreadcrumb');
-        crumbEl.innerHTML = '<span class="cwd-history-label"><i class="fas fa-clock-rotate-left"></i> 最近使用</span>';
-        listEl.innerHTML = '';
-        if (currentCwd) listEl.appendChild(makePickerItem('当前目录', currentCwd, 'fa-location-dot'));
-        history.forEach(function (h) {
-            var short = h.length > 58 ? '...' + h.slice(-55) : h;
-            listEl.appendChild(makePickerItem(short, h, 'fa-folder-open'));
+        append('主目录', data.home, 'fa-house');
+        append('当前项目', data.current || currentCwd, 'fa-location-dot');
+        (data.roots || []).forEach(function (root, index) {
+            append((data.roots || []).length === 1 ? '电脑' : ('磁盘 ' + (root.name || index + 1)), root.path, 'fa-computer');
         });
-        listEl.scrollTop = 0;
-    }
-
-    function makePickerItem(label, path, icon) {
-        var item = document.createElement('div');
-        item.className = 'cwd-picker-item cwd-history-item';
-        item.title = path;
-        item.innerHTML = '<i class="fas ' + icon + '"></i><span class="cwd-history-path"></span>';
-        item.querySelector('span').textContent = label;
-        item.onclick = function () { loadCwdPickerDirs(path); };
-        return item;
+        getCwdHistory().slice(0, 2).forEach(function (path, index) {
+            append('最近 ' + (index + 1), path, 'fa-clock-rotate-left');
+        });
     }
 
     function closeCwdPicker() {
@@ -1871,30 +2001,55 @@
     function loadCwdPickerDirs(path) {
         var listEl = document.getElementById('cwdPickerList');
         listEl.innerHTML = '<div class="cwd-picker-empty"><i class="fas fa-spinner spinner"></i> 加载中...</div>';
-        fetchJson('/cwd/list?path=' + encodeURIComponent(path || '')).then(function (d) {
+        fetchJson('/cwd/list?path=' + encodeURIComponent(path || '') + '&hidden=' + pickerShowHidden).then(function (d) {
             pickerCurrentPath = d.path || path;
             renderCwdBreadcrumb(pickerCurrentPath);
+            renderCwdShortcuts(d);
+            var selected = document.getElementById('cwdPickerSelected');
+            selected.textContent = pickerCurrentPath;
+            selected.title = pickerCurrentPath;
             var dirs = d.dirs || [];
             listEl.innerHTML = '';
+            if (d.parent) {
+                var parentItem = document.createElement('div');
+                parentItem.className = 'cwd-picker-item';
+                parentItem.innerHTML = '<i class="fas fa-arrow-turn-up"></i><span>.. 上一级</span>';
+                parentItem.onclick = function () { loadCwdPickerDirs(d.parent); };
+                listEl.appendChild(parentItem);
+            }
             if (dirs.length === 0) {
-                listEl.innerHTML = '<div class="cwd-picker-empty">此目录下没有子文件夹</div>';
+                var empty = document.createElement('div');
+                empty.className = 'cwd-picker-empty';
+                empty.textContent = '此目录下没有子文件夹，可以直接选择当前目录';
+                listEl.appendChild(empty);
                 return;
             }
-            dirs.forEach(function (name) {
+            dirs.forEach(function (entry) {
+                var name = typeof entry === 'string' ? entry : entry.name;
+                var childPath = typeof entry === 'string' ? joinDirectoryPath(pickerCurrentPath, name) : entry.path;
                 var item = document.createElement('div');
                 item.className = 'cwd-picker-item';
+                if (entry.readable === false) item.style.opacity = '0.55';
+                item.title = childPath;
                 item.innerHTML = '<i class="fas fa-folder"></i><span></span>';
                 item.querySelector('span').textContent = name;
-                item.onclick = function () {
-                    var sep = pickerCurrentPath.endsWith('/') || pickerCurrentPath.endsWith('\\') ? '' : '/';
-                    loadCwdPickerDirs(pickerCurrentPath + sep + name);
-                };
+                item.onclick = function () { loadCwdPickerDirs(childPath); };
                 listEl.appendChild(item);
             });
             listEl.scrollTop = 0;
         }).catch(function (err) {
             listEl.innerHTML = '<div class="cwd-picker-empty">加载失败：' + escapeHtml(err.message) + '</div>';
         });
+    }
+
+    function joinDirectoryPath(parent, name) {
+        var sep = parent.endsWith('/') || parent.endsWith('\\') ? '' : '/';
+        return parent + sep + name;
+    }
+
+    function toggleCwdHidden() {
+        pickerShowHidden = document.getElementById('cwdShowHidden').checked;
+        loadCwdPickerDirs(pickerCurrentPath);
     }
 
     function renderCwdBreadcrumb(path) {
@@ -1946,10 +2101,11 @@
         var attachBtn = document.querySelector('.attach-btn');
         indicator.style.display = running ? 'inline-flex' : 'none';
         inputArea.classList.toggle('processing', running);
-        sendBtn.disabled = running;
-        attachBtn.disabled = running;
-        userInput.disabled = running;
-        userInput.placeholder = running ? 'Agent 执行中，请稍候...' : '输入代码需求... (Enter 发送, Shift+Enter 换行)';
+        sendBtn.disabled = false;
+        sendBtn.title = running ? '追加提问（当前回复完成后自动发送）' : '发送';
+        attachBtn.disabled = false;
+        userInput.disabled = false;
+        userInput.placeholder = running ? '追加提问，Enter 加入队列…' : '输入代码需求... (Enter 发送, Shift+Enter 换行)';
         document.querySelectorAll('[data-lockable]').forEach(function (el) { el.disabled = running; });
         document.getElementById('modelSelect').disabled = running;
         cwdInput.disabled = running;
@@ -1961,18 +2117,12 @@
         document.getElementById('mobileOverlay').classList.add('open');
         if (panel === 'sessions') {
             document.querySelector('.sidebar').classList.add('open');
-        } else {
-            var right = document.getElementById('rightPanel');
-            right.classList.add('open');
-            if (panel === 'tools') document.getElementById('toolPanel').scrollIntoView({ block: 'nearest' });
-            if (panel === 'logs') agentLog.scrollIntoView({ block: 'nearest' });
         }
     }
 
     function closeMobilePanels() {
         document.getElementById('mobileOverlay').classList.remove('open');
         document.querySelector('.sidebar').classList.remove('open');
-        document.getElementById('rightPanel').classList.remove('open');
     }
 
     function isNearBottom() {
@@ -2041,9 +2191,12 @@
             <span><i class="fas fa-folder-open" style="margin-right:6px;"></i>选择工作目录</span>
             <button class="action-btn" onclick="closeCwdPicker()" style="font-size:14px;"><i class="fas fa-times"></i></button>
         </div>
+        <div class="cwd-picker-shortcuts" id="cwdPickerShortcuts"></div>
         <div class="cwd-picker-breadcrumb" id="cwdPickerBreadcrumb"></div>
         <div class="cwd-picker-list" id="cwdPickerList"></div>
         <div class="cwd-picker-footer">
+            <span class="cwd-picker-selected" id="cwdPickerSelected" title=""></span>
+            <label class="cwd-hidden-toggle"><input type="checkbox" id="cwdShowHidden" onchange="toggleCwdHidden()">显示隐藏目录</label>
             <button class="cwd-picker-select-btn" onclick="confirmCwdPicker()">选择此目录</button>
         </div>
     </div>

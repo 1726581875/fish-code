@@ -24,6 +24,7 @@ public class TerminalStart {
     private static volatile boolean stopRequested = false;
     private static volatile boolean approveAllRemaining = false;
     private static volatile HttpURLConnection activeConnection = null;
+    private static volatile Process activeProcess = null;
 
     private volatile String apiUrl;
     private volatile String apiKey;
@@ -77,10 +78,27 @@ public class TerminalStart {
         if (conn != null) {
             conn.disconnect();
         }
+        Process process = activeProcess;
+        if (process != null && process.isAlive()) {
+            process.destroy();
+            if (process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
         for (java.util.concurrent.CompletableFuture<Boolean> future : pendingConfirmations.values()) {
             future.complete(false);
         }
         pendingConfirmations.clear();
+    }
+
+    public static void registerActiveProcess(Process process) {
+        activeProcess = process;
+    }
+
+    public static void clearActiveProcess(Process process) {
+        if (activeProcess == process) {
+            activeProcess = null;
+        }
     }
 
     public static boolean isStopRequested() {
@@ -217,7 +235,12 @@ public class TerminalStart {
         List<JsonObject> loaded = sessionManager.loadSession(sessionId);
         if (loaded.isEmpty()) return false;
         messages.clear();
-        messages.addAll(loaded);
+        setMode(currentMode);
+        for (JsonObject message : loaded) {
+            if (!message.has("role") || !"system".equals(message.get("role").getAsString())) {
+                messages.add(message);
+            }
+        }
         currentSessionId = sessionId;
         messagesDirty = true;
         return true;
@@ -250,6 +273,7 @@ public class TerminalStart {
         List<Tool> all = new ArrayList<>();
         all.add(new ReadFileTool());
         all.add(new FindFileTool());
+        all.add(new SearchTextTool());
         all.add(new EditFileTool());
         all.add(new WriteFileTool());
         all.add(new RunCommandTool());
@@ -357,7 +381,7 @@ public class TerminalStart {
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
             String callId = toolCall.get("id").getAsString();
 
-            if (shouldConfirm(fnName)) {
+            if (shouldConfirm(fnName, fnArgs)) {
                 boolean approved = confirmAction(fnName, fnArgs);
                 if (!approved) {
                     addRejectionMessage(callId);
@@ -379,7 +403,7 @@ public class TerminalStart {
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
             String callId = toolCall.get("id").getAsString();
 
-            if (shouldConfirm(fnName)) {
+            if (shouldConfirm(fnName, fnArgs)) {
                 boolean approved;
                 if (approveAllRemaining) {
                     approved = true;
@@ -417,8 +441,20 @@ public class TerminalStart {
         }
     }
 
-    private boolean shouldConfirm(String fnName) {
-        return currentMode == AgentMode.CONFIRM && WRITE_TOOLS.contains(fnName);
+    private boolean shouldConfirm(String fnName, String fnArgs) {
+        if (currentMode != AgentMode.CONFIRM || !WRITE_TOOLS.contains(fnName)) {
+            return false;
+        }
+        if ("run_command".equals(fnName)) {
+            try {
+                JsonObject args = GSON.fromJson(fnArgs, JsonObject.class);
+                String command = args != null && args.has("command") ? args.get("command").getAsString() : "";
+                return !RunCommandTool.isReadOnlyCommand(command);
+            } catch (Exception ignored) {
+                return true;
+            }
+        }
+        return true;
     }
 
     private void addRejectionMessage(String callId) {
@@ -463,6 +499,10 @@ public class TerminalStart {
 
     int estimateTokens() {
         return countContextChars() / 3;
+    }
+
+    public int getContextCharCount() {
+        return countContextChars();
     }
 
     private int countContextChars() {
@@ -598,7 +638,18 @@ public class TerminalStart {
         }
 
         try {
-            return GSON.fromJson(responseBody.trim(), JsonObject.class);
+            JsonObject response = GSON.fromJson(responseBody.trim(), JsonObject.class);
+            if (response != null && response.has("choices") && response.get("choices").isJsonArray()
+                    && response.getAsJsonArray("choices").size() > 0) {
+                JsonObject choice = response.getAsJsonArray("choices").get(0).getAsJsonObject();
+                if (choice.has("message") && choice.get("message").isJsonObject()) {
+                    return choice.getAsJsonObject("message");
+                }
+            }
+            if (response != null && response.has("role")) {
+                return response;
+            }
+            throw new IOException("API response missing choices[0].message");
         } finally {
             if (activeConnection == conn) activeConnection = null;
         }
@@ -798,6 +849,18 @@ public class TerminalStart {
         }
 
         if (keepFrom > 1) {
+            // Tool calls and their results must stay in the same request. Move the
+            // cut point back to the beginning of the current user turn.
+            while (keepFrom > 1) {
+                JsonObject candidate = messages.get(keepFrom);
+                if (candidate.has("role") && "user".equals(candidate.get("role").getAsString())) {
+                    break;
+                }
+                keepFrom--;
+            }
+            if (keepFrom <= 1) {
+                return;
+            }
             JsonObject systemMsg = null;
             if (!messages.isEmpty() && "system".equals(messages.get(0).get("role").getAsString())) {
                 systemMsg = messages.get(0);

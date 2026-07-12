@@ -11,6 +11,13 @@ import java.util.regex.Matcher;
 
 public class RunCommandTool extends Tool {
 
+    private static final Pattern SAFE_GIT_COMMAND = Pattern.compile(
+            "^git\\s+(status|diff|log|show)(\\s|$)|^git\\s+branch\\s+--show-current(\\s|$)",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SAFE_INSPECTION_COMMAND = Pattern.compile(
+            "^(pwd|ls|rg|grep|head|tail|wc|which|type|java\\s+-version|javac\\s+-version)(\\s|$)",
+            Pattern.CASE_INSENSITIVE);
+
     private static final Pattern[] DANGEROUS_WIN = {
             Pattern.compile("\\bdel\\b", Pattern.CASE_INSENSITIVE),
             Pattern.compile("\\brd\\b", Pattern.CASE_INSENSITIVE),
@@ -41,6 +48,21 @@ public class RunCommandTool extends Tool {
     public RunCommandTool() {
         super("run_command", "执行一个shell命令并返回输出结果",
                 new Param("command", "string", "要执行的命令", true));
+    }
+
+    public static boolean isReadOnlyCommand(String command) {
+        if (command == null) return false;
+        String trimmed = command.trim();
+        if (trimmed.isEmpty()) return false;
+        // Keep the automatic path deliberately narrow. Compound shell syntax can
+        // hide a write behind an otherwise harmless first command.
+        if (trimmed.contains(";") || trimmed.contains("&&") || trimmed.contains("||")
+                || trimmed.contains("|") || trimmed.contains(">") || trimmed.contains("<")
+                || trimmed.contains("`") || trimmed.contains("$(")) {
+            return false;
+        }
+        return SAFE_GIT_COMMAND.matcher(trimmed).find()
+                || SAFE_INSPECTION_COMMAND.matcher(trimmed).find();
     }
 
     @Override
@@ -80,6 +102,7 @@ public class RunCommandTool extends Tool {
         pb.redirectErrorStream(true);
         pb.directory(cwd);
         Process process = pb.start();
+        TerminalStart.registerActiveProcess(process);
 
         StringBuilder output = new StringBuilder();
         java.util.concurrent.ExecutorService readExecutor = java.util.concurrent.Executors
@@ -118,6 +141,7 @@ public class RunCommandTool extends Tool {
             }
         } finally {
             readExecutor.shutdownNow();
+            TerminalStart.clearActiveProcess(process);
         }
 
         int exitCode = process.exitValue();
