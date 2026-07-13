@@ -4,6 +4,7 @@ import com.google.gson.*;
 import com.sun.net.httpserver.*;
 import java.io.*;
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -27,6 +28,11 @@ public class WebStart {
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
     private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     private static final Object agentLock = new Object();
+    private static final Semaphore chatSlot = new Semaphore(1, true);
+    private static final RunRegistry runRegistry = new RunRegistry();
+    private static WorkspacePolicy workspacePolicy;
+    private static String bindAddress;
+    private static boolean localOnlyBind;
     private static ClaudeHistoryReader claudeReader;
     private static final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "token-cleanup");
@@ -45,6 +51,7 @@ public class WebStart {
         webAuthEnabled = ConfigLoader.getConfigBoolean("web_auth_enabled", "WEB_AUTH_ENABLED", false);
         webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "fish");
         webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "");
+        bindAddress = ConfigLoader.getConfigString("web_bind_address", "WEB_BIND_ADDRESS", "127.0.0.1");
         if (webAuthEnabled && (webPassword == null || webPassword.trim().isEmpty())) {
             webPassword = "fish-" + UUID.randomUUID().toString().substring(0, 8);
             generatedWebPassword = true;
@@ -64,6 +71,23 @@ public class WebStart {
             System.out.println("工作目录配置无效，继续使用当前目录: " + System.getProperty("user.dir"));
             System.out.println("原因: " + e.getMessage());
         }
+        try {
+            localOnlyBind = InetAddress.getByName(bindAddress).isLoopbackAddress();
+            if (!localOnlyBind && !webAuthEnabled) {
+                System.err.println("拒绝启动：监听非本机地址时必须启用 WEB_AUTH_ENABLED=true");
+                return;
+            }
+        } catch (IOException e) {
+            System.err.println("无效的监听地址: " + bindAddress);
+            return;
+        }
+        try {
+            workspacePolicy = WorkspacePolicy.fromConfig(ConfigLoader.loadConfig(),
+                    agent.getWorkspaceDir(), localOnlyBind);
+        } catch (IOException e) {
+            System.err.println("工作区安全策略初始化失败: " + e.getMessage());
+            return;
+        }
 
         String claudeDir = ConfigLoader.getConfigString("claude_dir", "CLAUDE_DIR", "");
         claudeReader = new ClaudeHistoryReader(claudeDir);
@@ -76,10 +100,11 @@ public class WebStart {
         cleanupExecutor.scheduleAtFixedRate(() -> {
             long now = System.currentTimeMillis();
             tokens.entrySet().removeIf(e -> now >= e.getValue());
+            runRegistry.cleanup(TimeUnit.HOURS.toMillis(24));
         }, 1, 1, TimeUnit.HOURS);
 
         try {
-            server = HttpServer.create(new InetSocketAddress(PORT), 0);
+            server = HttpServer.create(new InetSocketAddress(bindAddress, PORT), 0);
             server.createContext("/", new IndexHandler());
             server.createContext("/login", new LoginHandler());
             server.createContext("/logout", new LogoutHandler());
@@ -91,6 +116,7 @@ public class WebStart {
             server.createContext("/project/tree", new ProjectTreeHandler());
             server.createContext("/confirm", new ConfirmHandler());
             server.createContext("/cancel", new CancelHandler());
+            server.createContext("/rollback", new RollbackHandler());
             server.createContext("/config", new ConfigHandler());
             server.createContext("/sessions", new SessionsHandler());
             server.createContext("/health", new HealthHandler());
@@ -99,7 +125,17 @@ public class WebStart {
             server.createContext("/claude-conversations", new ClaudeConversationsPageHandler());
             server.createContext("/claude-flowchart", new FlowchartPageHandler());
             ClaudeSessionsHandler claudeHandler = new ClaudeSessionsHandler(claudeReader);
-            server.createContext("/claude-api", claudeHandler);
+            server.createContext("/claude-api", exchange -> {
+                if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                    handleOptions(exchange);
+                    return;
+                }
+                if (!checkAuth(exchange)) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                    return;
+                }
+                claudeHandler.handle(exchange);
+            });
             server.setExecutor(new ThreadPoolExecutor(16, 16, 60L, TimeUnit.SECONDS,
                     new LinkedBlockingQueue<>(100), r -> {
                         Thread t = new Thread(r, "http-worker");
@@ -108,7 +144,7 @@ public class WebStart {
                     }));
             server.start();
 
-            System.out.println("\n  Fish Code Web 已启动: \u001B[36mhttp://localhost:" + PORT + "\u001B[0m");
+            System.out.println("\n  Fish Code Web 已启动: \u001B[36mhttp://" + bindAddress + ":" + PORT + "\u001B[0m");
             if (webAuthEnabled) {
                 System.out.println("  登录已启用，账号: " + webUser);
                 if (generatedWebPassword) {
@@ -141,6 +177,15 @@ public class WebStart {
         return false;
     }
 
+    private static File requireOrAuthorizeWorkspace(File candidate) throws IOException {
+        try {
+            return workspacePolicy.requireAllowed(candidate);
+        } catch (IOException denied) {
+            if (!localOnlyBind) throw denied;
+            return workspacePolicy.authorizeExplicit(candidate);
+        }
+    }
+
     private static String extractToken(HttpExchange exchange) {
         List<String> authHeaders = exchange.getRequestHeaders().get("Authorization");
         if (authHeaders != null && !authHeaders.isEmpty()) {
@@ -170,6 +215,17 @@ public class WebStart {
         exchange.sendResponseHeaders(code, resp.length);
         exchange.getResponseBody().write(resp);
         exchange.close();
+    }
+
+    private static boolean writeSse(OutputStream output, JsonObject event) {
+        try {
+            String data = "data: " + GSON.toJson(event) + "\n\n";
+            output.write(data.getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            return true;
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     private static void addCorsHeaders(HttpExchange exchange) {
@@ -361,32 +417,60 @@ public class WebStart {
                     sendJson(exchange, result, 503);
                     return;
                 }
-                TerminalStart.setRequestOverride(reqModel, resolvedApiUrl, resolvedApiKey);
             } else if (agent.getApiKey() == null || agent.getApiKey().isEmpty()) {
                 JsonObject result = new JsonObject();
                 result.addProperty("error", "未配置 API Key。请设置环境变量 DEEPSEEK_API_KEY，或在 ~/.fish-code/config.json 中配置 cur_api_key 后重启服务。");
                 sendJson(exchange, result, 503);
                 return;
             }
+            String effectiveCwd = agent.getWorkspaceDir();
             if (reqCwd != null && !reqCwd.isEmpty()) {
-                TerminalStart.setCurrentCwd(reqCwd);
+                try {
+                    effectiveCwd = workspacePolicy.requireAllowed(new File(reqCwd)).getPath();
+                } catch (IOException e) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("error", e.getMessage());
+                    sendJson(exchange, result, 400);
+                    return;
+                }
             }
-            TerminalStart.setApproveAllRemaining(false);
-            TerminalStart.resetStopRequest();
+            String effectiveModel = reqModel != null ? reqModel : agent.getModel();
+            String effectiveApiUrl = resolvedApiUrl != null ? resolvedApiUrl : agent.getApiUrl();
+            String effectiveApiKey = resolvedApiKey != null && !resolvedApiKey.isEmpty() ? resolvedApiKey : agent.getApiKey();
+            if (!chatSlot.tryAcquire()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"已有任务正在执行，请等待当前任务完成或先取消\"}", JsonObject.class), 409);
+                return;
+            }
             try {
-                if (stream) {
-                    handleStream(exchange, message);
+                String resumeRunId = req.has("resumeRunId") ? req.get("resumeRunId").getAsString() : "";
+                String resumeSessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                AgentRun run;
+                if (!resumeRunId.isEmpty()) {
+                    JsonObject persisted = runRegistry.get(resumeRunId) == null && !resumeSessionId.isEmpty()
+                            ? sessionManager.loadTaskState(resumeSessionId) : null;
+                    try {
+                        run = runRegistry.resume(resumeRunId, message, effectiveModel, effectiveApiUrl,
+                                effectiveApiKey, effectiveCwd, persisted);
+                    } catch (IOException e) {
+                        JsonObject error = new JsonObject();
+                        error.addProperty("error", "无法恢复任务: " + e.getMessage());
+                        sendJson(exchange, error, 409);
+                        return;
+                    }
                 } else {
-                    handleSync(exchange, message);
+                    run = runRegistry.create(message, effectiveModel, effectiveApiUrl, effectiveApiKey, effectiveCwd);
+                }
+                if (stream) {
+                    handleStream(exchange, message, run);
+                } else {
+                    handleSync(exchange, message, run);
                 }
             } finally {
-                TerminalStart.clearRequestOverride();
-                TerminalStart.clearCurrentCwd();
-                TerminalStart.resetStopRequest();
+                chatSlot.release();
             }
         }
 
-        private void handleStream(HttpExchange exchange, String message) throws IOException {
+        private void handleStream(HttpExchange exchange, String message, AgentRun run) throws IOException {
             addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -398,6 +482,33 @@ public class WebStart {
             try {
                 StreamCallback sseCallback = new StreamCallback() {
                     @Override
+                    public void onRunStarted(String runId, String sessionId) {
+                        JsonObject event = new JsonObject();
+                        event.addProperty("type", "run_started");
+                        event.addProperty("runId", runId);
+                        event.addProperty("sessionId", sessionId);
+                        if (!writeSse(os, event)) run.requestStop();
+                    }
+
+                    @Override
+                    public void onTaskUpdate(JsonObject taskState) {
+                        JsonObject event = new JsonObject();
+                        event.addProperty("type", "task_update");
+                        event.addProperty("runId", run.getRunId());
+                        event.add("task", taskState == null ? new JsonObject() : taskState);
+                        if (!writeSse(os, event)) run.requestStop();
+                    }
+
+                    @Override
+                    public void onVerification(JsonObject verification) {
+                        JsonObject event = new JsonObject();
+                        event.addProperty("type", "verification");
+                        event.addProperty("runId", run.getRunId());
+                        event.add("verification", verification == null ? new JsonObject() : verification);
+                        if (!writeSse(os, event)) run.requestStop();
+                    }
+
+                    @Override
                     public void onToken(String token) {
                         try {
                             JsonObject evt = new JsonObject();
@@ -406,7 +517,7 @@ public class WebStart {
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
-                        } catch (IOException ignored) {}
+                        } catch (IOException ignored) { run.requestStop(); }
                     }
 
                     @Override
@@ -423,7 +534,7 @@ public class WebStart {
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
-                        } catch (IOException ignored) {}
+                        } catch (IOException ignored) { run.requestStop(); }
                     }
 
                     @Override
@@ -438,21 +549,27 @@ public class WebStart {
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
-                        } catch (IOException ignored) {}
+                        } catch (IOException ignored) { run.requestStop(); }
                     }
 
                     @Override
                     public void onConfirmRequired(String confirmKey, String fnName, String fnArgs) {
+                        onConfirmRequired(run.getRunId(), confirmKey, fnName, fnArgs);
+                    }
+
+                    @Override
+                    public void onConfirmRequired(String runId, String confirmKey, String fnName, String fnArgs) {
                         try {
                             JsonObject evt = new JsonObject();
                             evt.addProperty("type", "confirm_required");
                             evt.addProperty("confirmKey", confirmKey);
+                            evt.addProperty("runId", runId);
                             evt.addProperty("name", fnName);
                             evt.addProperty("args", fnArgs);
                             String data = "data: " + GSON.toJson(evt) + "\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
-                        } catch (IOException ignored) {}
+                        } catch (IOException ignored) { run.requestStop(); }
                     }
 
                     @Override
@@ -467,6 +584,13 @@ public class WebStart {
                             doneEvent.addProperty("contextChars", agent.getContextCharCount());
                             doneEvent.addProperty("mode", agent.getMode().label());
                             doneEvent.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+                            JsonObject task = run.getTaskState().toJson();
+                            doneEvent.addProperty("runId", run.getRunId());
+                            doneEvent.addProperty("finalStatus", run.getTaskState().getPhase().name());
+                            doneEvent.add("task", task);
+                            doneEvent.add("modifiedFiles", task.getAsJsonArray("modifiedFiles"));
+                            doneEvent.add("verifications", task.getAsJsonArray("verifications"));
+                            doneEvent.add("remainingRisks", task.getAsJsonArray("remainingRisks"));
                             String data = "data: " + GSON.toJson(doneEvent) + "\n[END]\n\n";
                             os.write(data.getBytes(StandardCharsets.UTF_8));
                             os.flush();
@@ -486,12 +610,14 @@ public class WebStart {
                     }
                 };
                 synchronized (agentLock) {
-                    agent.chatStream(message, sseCallback);
+                    agent.chatStream(message, sseCallback, run);
                 }
             } catch (Exception e) {
                 JsonObject errorEvent = new JsonObject();
                 errorEvent.addProperty("type", "error");
                 errorEvent.addProperty("error", e.getMessage());
+                errorEvent.addProperty("runId", run.getRunId());
+                errorEvent.add("task", run.getTaskState().toJson());
                 String data = "data: " + GSON.toJson(errorEvent) + "\n\n";
                 try {
                     os.write(data.getBytes(StandardCharsets.UTF_8));
@@ -502,12 +628,12 @@ public class WebStart {
             }
         }
 
-        private void handleSync(HttpExchange exchange, String message) throws IOException {
+        private void handleSync(HttpExchange exchange, String message, AgentRun run) throws IOException {
             JsonObject result = new JsonObject();
             try {
                 ChatResult chatResult;
                 synchronized (agentLock) {
-                    chatResult = agent.chat(message);
+                    chatResult = agent.chat(message, run);
                 }
                 result.addProperty("reply", chatResult.getReply() != null ? chatResult.getReply() : "");
                 result.addProperty("durationMs", chatResult.getDurationMs());
@@ -525,6 +651,9 @@ public class WebStart {
             result.addProperty("toolOutput", "");
             result.addProperty("mode", agent.getMode().label());
             result.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+            result.addProperty("runId", run.getRunId());
+            result.addProperty("finalStatus", run.getTaskState().getPhase().name());
+            result.add("task", run.getTaskState().toJson());
             sendJson(exchange, result, 200);
         }
     }
@@ -633,7 +762,7 @@ public class WebStart {
                 try {
                     String cwd;
                     synchronized (agentLock) {
-                        cwd = agent.setWorkspaceDir(path);
+                        cwd = agent.setWorkspaceDir(requireOrAuthorizeWorkspace(new File(path)).getPath());
                         agent.newConversation();
                     }
                     JsonObject result = new JsonObject();
@@ -663,12 +792,70 @@ public class WebStart {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
                 return;
             }
-            JsonObject config = ConfigLoader.loadConfig();
+            String method = exchange.getRequestMethod();
+            if ("GET".equals(method)) {
+                sendJson(exchange, buildConfigResponse(ConfigLoader.loadConfig()), 200);
+                return;
+            }
+            if (!"POST".equals(method)) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+
+            try {
+                JsonObject request = GSON.fromJson(readBody(exchange), JsonObject.class);
+                if (request == null) throw new IllegalArgumentException("请求内容不能为空");
+                String action = request.has("action") ? request.get("action").getAsString() : "";
+                JsonObject updated;
+                synchronized (agentLock) {
+                    JsonObject current = ConfigLoader.loadConfig();
+                    switch (action) {
+                        case "saveModel":
+                            updated = ModelConfigManager.saveModel(current, request);
+                            break;
+                        case "selectModel":
+                            updated = ModelConfigManager.selectModel(current, requestString(request, "value"));
+                            break;
+                        case "deleteModel":
+                            updated = ModelConfigManager.deleteModel(current, requestString(request, "value"));
+                            break;
+                        default:
+                            throw new IllegalArgumentException("未知操作");
+                    }
+                    ConfigLoader.saveConfig(updated);
+                    applyRuntimeModel(updated);
+                }
+                sendJson(exchange, buildConfigResponse(updated), 200);
+            } catch (IllegalArgumentException | JsonParseException e) {
+                JsonObject result = new JsonObject();
+                result.addProperty("error", e.getMessage() == null ? "模型配置无效" : e.getMessage());
+                sendJson(exchange, result, 400);
+            } catch (IOException e) {
+                JsonObject result = new JsonObject();
+                result.addProperty("error", "保存配置失败：" + e.getMessage());
+                sendJson(exchange, result, 500);
+            }
+        }
+
+        private static String requestString(JsonObject request, String key) {
+            if (!request.has(key) || request.get(key).isJsonNull()) return "";
+            return request.get(key).getAsString();
+        }
+
+        private static void applyRuntimeModel(JsonObject config) {
+            if (config.has("cur_model")) agent.setModel(config.get("cur_model").getAsString());
+            if (config.has("cur_api_url")) agent.setApiUrl(config.get("cur_api_url").getAsString());
+            if (config.has("cur_api_key")) agent.setApiKey(config.get("cur_api_key").getAsString());
+        }
+
+        private static JsonObject buildConfigResponse(JsonObject config) {
             JsonObject result = new JsonObject();
             boolean anyModelApiKeyConfigured = false;
-            if (config.has("models")) {
+            if (config.has("models") && config.get("models").isJsonArray()) {
                 JsonArray safeModels = new JsonArray();
                 for (JsonElement el : config.getAsJsonArray("models")) {
+                    if (!el.isJsonObject()) continue;
                     JsonObject source = el.getAsJsonObject();
                     JsonObject model = new JsonObject();
                     for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
@@ -688,20 +875,22 @@ public class WebStart {
             } else {
                 result.add("models", new JsonArray());
             }
-            result.addProperty("model", agent.getModel());
-            result.addProperty("apiUrl", agent.getApiUrl());
+            String currentModel = config.has("cur_model") ? config.get("cur_model").getAsString() : agent.getModel();
+            String currentApiUrl = config.has("cur_api_url") ? config.get("cur_api_url").getAsString() : agent.getApiUrl();
+            result.addProperty("model", currentModel);
+            result.addProperty("apiUrl", currentApiUrl);
             result.addProperty("workspaceDir", agent.getWorkspaceDir());
             result.addProperty("webAuthEnabled", webAuthEnabled);
             boolean apiKeyConfigured = (agent.getApiKey() != null && !agent.getApiKey().isEmpty()) || anyModelApiKeyConfigured;
             result.addProperty("apiKeyConfigured", apiKeyConfigured);
             result.addProperty("configured", apiKeyConfigured);
             if (!apiKeyConfigured) {
-                result.addProperty("setupMessage", "未配置 API Key：请设置环境变量 DEEPSEEK_API_KEY，或在 ~/.fish-code/config.json 中配置 cur_api_key 后重启服务。");
+                result.addProperty("setupMessage", "未配置 API Key：请使用页面上的模型配置功能添加可用模型。");
             }
             if (config.has("cur_model")) {
                 result.addProperty("cur_model", config.get("cur_model").getAsString());
             }
-            sendJson(exchange, result, 200);
+            return result;
         }
     }
 
@@ -735,7 +924,15 @@ public class WebStart {
                 if (newCwd.matches("^[A-Za-z]:$")) {
                     newCwd = newCwd + "\\";
                 }
-                java.io.File dir = new java.io.File(newCwd);
+                java.io.File dir;
+                try {
+                    dir = requireOrAuthorizeWorkspace(new java.io.File(newCwd));
+                } catch (IOException e) {
+                    JsonObject error = new JsonObject();
+                    error.addProperty("error", e.getMessage());
+                    sendJson(exchange, error, 403);
+                    return;
+                }
                 if (!dir.exists() || !dir.isDirectory()) {
                     sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在: " + newCwd + "\"}", JsonObject.class), 400);
                     return;
@@ -798,6 +995,10 @@ public class WebStart {
                 path = path + "\\";
             }
             java.io.File dir = new java.io.File(path).getCanonicalFile();
+            if (!workspacePolicy.isAllowed(dir)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"目录超出允许的工作区范围\"}", JsonObject.class), 403);
+                return;
+            }
             if (!dir.exists() || !dir.isDirectory()) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"目录不存在\"}", JsonObject.class), 400);
                 return;
@@ -805,11 +1006,12 @@ public class WebStart {
             JsonObject result = new JsonObject();
             result.addProperty("path", dir.getAbsolutePath());
             File parent = dir.getParentFile();
-            result.addProperty("parent", parent == null ? "" : parent.getCanonicalPath());
-            result.addProperty("home", new File(System.getProperty("user.home")).getCanonicalPath());
+            result.addProperty("parent", parent == null || !workspacePolicy.isAllowed(parent) ? "" : parent.getCanonicalPath());
+            File home = new File(System.getProperty("user.home")).getCanonicalFile();
+            result.addProperty("home", workspacePolicy.isAllowed(home) ? home.getPath() : "");
             result.addProperty("current", new File(agent.getWorkspaceDir()).getCanonicalPath());
             JsonArray roots = new JsonArray();
-            for (File root : File.listRoots()) {
+            for (File root : workspacePolicy.getRoots()) {
                 JsonObject rootItem = new JsonObject();
                 rootItem.addProperty("name", root.getAbsolutePath());
                 rootItem.addProperty("path", root.getCanonicalPath());
@@ -825,6 +1027,7 @@ public class WebStart {
             Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
             for (java.io.File f : files) {
                 if (f.isDirectory() && (includeHidden || !f.isHidden())) {
+                    if (!workspacePolicy.isAllowed(f)) continue;
                     JsonObject dirItem = new JsonObject();
                     dirItem.addProperty("name", f.getName());
                     dirItem.addProperty("path", f.getCanonicalPath());
@@ -946,17 +1149,15 @@ public class WebStart {
             }
             String body = readBody(exchange);
             JsonObject req = GSON.fromJson(body, JsonObject.class);
+            String runId = req.has("runId") ? req.get("runId").getAsString() : "";
             String key = req.has("key") ? req.get("key").getAsString() : "";
             boolean approved = req.has("approved") && req.get("approved").getAsBoolean();
             boolean approveAll = req.has("approveAll") && req.get("approveAll").getAsBoolean();
-            if (key.isEmpty()) {
-                sendJson(exchange, GSON.fromJson("{\"error\":\"key不能为空\"}", JsonObject.class), 400);
+            if (runId.isEmpty() || key.isEmpty()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"runId和key不能为空\"}", JsonObject.class), 400);
                 return;
             }
-            if (approveAll) {
-                TerminalStart.setApproveAllRemaining(true);
-            }
-            boolean resolved = TerminalStart.resolveConfirmation(key, approved);
+            boolean resolved = runRegistry.confirm(runId, key, approved, approveAll);
             JsonObject result = new JsonObject();
             result.addProperty("ok", resolved);
             sendJson(exchange, result, 200);
@@ -979,10 +1180,71 @@ public class WebStart {
                 exchange.close();
                 return;
             }
-            TerminalStart.requestStop();
+            JsonObject req = GSON.fromJson(readBody(exchange), JsonObject.class);
+            String runId = req != null && req.has("runId") ? req.get("runId").getAsString() : "";
+            if (runId.isEmpty()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"runId不能为空\"}", JsonObject.class), 400);
+                return;
+            }
+            boolean cancelled = runRegistry.cancel(runId);
             JsonObject result = new JsonObject();
-            result.addProperty("success", true);
-            sendJson(exchange, result, 200);
+            result.addProperty("success", cancelled);
+            sendJson(exchange, result, cancelled ? 200 : 404);
+        }
+    }
+
+    static class RollbackHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) { handleOptions(exchange); return; }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            JsonObject req = GSON.fromJson(readBody(exchange), JsonObject.class);
+            String runId = req != null && req.has("runId") ? req.get("runId").getAsString() : "";
+            if (runId.isEmpty()) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"runId不能为空\"}", JsonObject.class), 400);
+                return;
+            }
+            try {
+                List<String> restored;
+                AgentRun registered = runRegistry.get(runId);
+                String sessionId = req.has("sessionId") ? req.get("sessionId").getAsString() : "";
+                if (registered != null) {
+                    restored = runRegistry.rollback(runId);
+                    if (!sessionId.isEmpty()) {
+                        sessionManager.saveTaskState(sessionId, registered.getTaskState().toPersistentJson());
+                    }
+                } else {
+                    JsonObject persisted = sessionManager.loadTaskState(sessionId);
+                    JsonObject session = sessionManager.getSessionInfo(sessionId);
+                    if (persisted == null || session == null || !persisted.has("runId")
+                            || !runId.equals(persisted.get("runId").getAsString())) {
+                        throw new IOException("任务不存在、已过期或会话不匹配");
+                    }
+                    File cwd = requireOrAuthorizeWorkspace(new File(session.get("cwd").getAsString()));
+                    restored = new ChangeJournal(runId, cwd.getPath()).rollback();
+                    TaskState restoredState = TaskState.fromJson(persisted);
+                    restoredState.markRolledBack();
+                    sessionManager.saveTaskState(sessionId, restoredState.toPersistentJson());
+                }
+                JsonObject result = new JsonObject();
+                result.addProperty("success", true);
+                JsonArray files = new JsonArray();
+                for (String file : restored) files.add(file);
+                result.add("restoredFiles", files);
+                sendJson(exchange, result, 200);
+            } catch (IOException e) {
+                JsonObject result = new JsonObject();
+                result.addProperty("error", e.getMessage());
+                sendJson(exchange, result, 400);
+            }
         }
     }
 
@@ -1032,7 +1294,7 @@ public class WebStart {
                     synchronized (agentLock) {
                         if (req.has("cwd") && !req.get("cwd").getAsString().isEmpty()) {
                             try {
-                                agent.setWorkspaceDir(req.get("cwd").getAsString());
+                                agent.setWorkspaceDir(requireOrAuthorizeWorkspace(new File(req.get("cwd").getAsString())).getPath());
                             } catch (IOException e) {
                                 JsonObject result = new JsonObject();
                                 result.addProperty("error", e.getMessage());
@@ -1052,6 +1314,11 @@ public class WebStart {
                         result.addProperty("success", true);
                         result.addProperty("message", "已恢复会话 " + sessionId);
                         result.add("messages", messageArray);
+                        JsonObject taskState = sessionManager.loadTaskState(sessionId);
+                        if (taskState != null) {
+                            TaskState restoredTask = TaskState.fromJson(taskState);
+                            result.add("task", restoredTask == null ? new JsonObject() : restoredTask.toJson());
+                        }
                         result.addProperty("sessionId", sessionId);
                         result.addProperty("cwd", agent.getWorkspaceDir());
                         synchronized (agentLock) {
@@ -1121,6 +1388,10 @@ public class WebStart {
                 exchange.close();
                 return;
             }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
             byte[] html = readHtml("home.html");
             addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
@@ -1137,6 +1408,10 @@ public class WebStart {
                 addCorsHeaders(exchange);
                 exchange.sendResponseHeaders(204, -1);
                 exchange.close();
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
                 return;
             }
             byte[] html = readHtml("claude-conversations.html");
@@ -1157,6 +1432,10 @@ public class WebStart {
                 exchange.close();
                 return;
             }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
             byte[] html = readHtml("claude-history.html");
             addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
@@ -1175,6 +1454,10 @@ public class WebStart {
                 exchange.close();
                 return;
             }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
             byte[] html = readHtml("claude-flowchart.html");
             addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
@@ -1185,12 +1468,18 @@ public class WebStart {
     }
 
     private static String readBody(HttpExchange exchange) throws IOException {
-        try (InputStreamReader r = new InputStreamReader(exchange.getRequestBody(), StandardCharsets.UTF_8);
-             BufferedReader br = new BufferedReader(r)) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) sb.append(line);
-            return sb.toString();
+        final int maxBytes = 1024 * 1024;
+        try (InputStream input = exchange.getRequestBody();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > maxBytes) throw new IOException("请求体过大，上限 1MB");
+                output.write(buffer, 0, count);
+            }
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 

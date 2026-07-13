@@ -4,6 +4,8 @@ import com.google.gson.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import org.example.TerminalStart;
+import org.example.core.AgentRun;
 
 public class EditFileTool extends Tool {
 
@@ -61,11 +63,15 @@ public class EditFileTool extends Tool {
         String diff = DiffUtils.buildEditDiff(file.getAbsolutePath(), oldContent, newContent, oldString, newString);
         System.out.println(diff);
         Path filePath = Paths.get(file.getAbsolutePath());
-        Files.write(filePath, newContent.getBytes(StandardCharsets.UTF_8));
+        AgentRun run = TerminalStart.getCurrentRun();
+        if (run != null) run.getChangeJournal().capture(file);
+        ToolUtils.writeAtomically(filePath, newContent.getBytes(StandardCharsets.UTF_8));
+        if (run != null) run.getChangeJournal().recordWritten(file);
         details.addProperty("diff", diff);
         details.addProperty("changed", !oldContent.equals(newContent));
         details.addProperty("oldChars", oldContent.length());
         details.addProperty("newChars", newContent.length());
+        if (run != null) run.getTaskState().markModified(file.getAbsolutePath());
         return new ToolResult("文件已修改: " + file.getAbsolutePath(), details);
     }
 }

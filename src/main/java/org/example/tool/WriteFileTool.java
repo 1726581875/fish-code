@@ -4,6 +4,8 @@ import com.google.gson.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import org.example.TerminalStart;
+import org.example.core.AgentRun;
 
 public class WriteFileTool extends Tool {
 
@@ -41,6 +43,12 @@ public class WriteFileTool extends Tool {
         String diff;
         if (file.exists()) {
             String oldContent = new String(Files.readAllBytes(Paths.get(file.getAbsolutePath())), StandardCharsets.UTF_8);
+            if (oldContent.equals(newContent)) {
+                details.addProperty("changed", false);
+                details.addProperty("oldChars", oldContent.length());
+                details.addProperty("newChars", newContent.length());
+                return new ToolResult("写入内容与现有文件相同，文件未修改: " + file.getAbsolutePath(), details);
+            }
             diff = DiffUtils.buildWriteDiff(file.getAbsolutePath(), oldContent, newContent);
             details.addProperty("oldChars", oldContent.length());
         } else {
@@ -49,9 +57,14 @@ public class WriteFileTool extends Tool {
         }
         System.out.println(diff);
 
-        Files.write(Paths.get(file.getAbsolutePath()), newContent.getBytes(StandardCharsets.UTF_8));
+        AgentRun run = TerminalStart.getCurrentRun();
+        if (run != null) run.getChangeJournal().capture(file);
+        ToolUtils.writeAtomically(Paths.get(file.getAbsolutePath()), newContent.getBytes(StandardCharsets.UTF_8));
+        if (run != null) run.getChangeJournal().recordWritten(file);
         details.addProperty("diff", diff);
         details.addProperty("newChars", newContent.length());
+        details.addProperty("changed", true);
+        if (run != null) run.getTaskState().markModified(file.getAbsolutePath());
         return new ToolResult("文件已写入: " + file.getAbsolutePath(), details);
     }
 }

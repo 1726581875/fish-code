@@ -4,8 +4,15 @@ import org.example.TerminalStart;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 public final class ToolUtils {
 
@@ -35,6 +42,33 @@ public final class ToolUtils {
             return new File(canonicalPath);
         } catch (IOException e) {
             throw new SecurityException("无法解析路径: " + path, e);
+        }
+    }
+
+    public static void writeAtomically(Path target, byte[] content) throws IOException {
+        Path absolute = target.toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent == null) throw new IOException("目标文件没有父目录: " + target);
+        Files.createDirectories(parent);
+        Set<PosixFilePermission> permissions = null;
+        if (Files.exists(absolute)) {
+            try { permissions = Files.getPosixFilePermissions(absolute); }
+            catch (UnsupportedOperationException ignored) {}
+        }
+        Path temp = Files.createTempFile(parent, ".fish-code-", ".tmp");
+        try {
+            Files.write(temp, content, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            if (permissions != null) {
+                try { Files.setPosixFilePermissions(temp, permissions); }
+                catch (UnsupportedOperationException ignored) {}
+            }
+            try {
+                Files.move(temp, absolute, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, absolute, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
 

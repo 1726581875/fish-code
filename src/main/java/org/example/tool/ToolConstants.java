@@ -6,6 +6,8 @@ public final class ToolConstants {
     public static final int MAX_TOOL_ROUNDS = 50;
     public static final int OUTPUT_TRUNCATE_CHARS = 8000;
     public static final int COMMAND_TIMEOUT_SECONDS = 30;
+    public static final int COMMAND_MAX_TIMEOUT_SECONDS = 600;
+    public static final int COMMAND_MAX_OUTPUT_CHARS = 50000;
     public static final int DIFF_CONTEXT_LINES = 3;
     public static final int DIFF_MAX_PREVIEW_LINES = 40;
     public static final int API_CONNECT_TIMEOUT_MS = 30000;

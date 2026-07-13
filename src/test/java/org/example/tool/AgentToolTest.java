@@ -23,6 +23,32 @@ public class AgentToolTest extends TestCase {
         assertFalse(RunCommandTool.isReadOnlyCommand("git status && rm -rf target"));
         assertFalse(RunCommandTool.isReadOnlyCommand("mvn test"));
         assertFalse(RunCommandTool.isReadOnlyCommand("echo changed > file.txt"));
+        assertTrue(RunCommandTool.isVerificationCommand("mvn test"));
+        assertTrue(RunCommandTool.isVerificationCommand("git diff --check"));
+        assertFalse(RunCommandTool.isVerificationCommand("git status --short"));
+        assertFalse(RunCommandTool.isVerificationCommand("echo build"));
+        assertFalse(RunCommandTool.isVerificationCommand("ls build"));
+        assertFalse(RunCommandTool.isVerificationCommand("mvn test || true"));
+        assertEquals(org.example.core.TaskState.VerificationLevel.TEST,
+                RunCommandTool.verificationLevel("./mvnw test"));
+        assertEquals(org.example.core.TaskState.VerificationLevel.BUILD,
+                RunCommandTool.verificationLevel("javac Sample.java"));
+    }
+
+    public void testDirectShellFileMutationIsBlocked() throws Exception {
+        Path workspace = Files.createTempDirectory("fish-code-command-guard-");
+        try {
+            TerminalStart.setCurrentCwd(workspace.toString());
+            JsonObject args = new JsonObject();
+            args.addProperty("command", "echo changed > source.txt");
+            ToolResult result = new RunCommandTool().executeDetailed(args);
+            assertEquals("untracked_workspace_mutation", result.getDetails().get("error").getAsString());
+            assertFalse(Files.exists(workspace.resolve("source.txt")));
+        } finally {
+            TerminalStart.clearCurrentCwd();
+            Files.deleteIfExists(workspace.resolve("source.txt"));
+            Files.deleteIfExists(workspace);
+        }
     }
 
     public void testLineReadAndContentSearch() throws Exception {

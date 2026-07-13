@@ -25,6 +25,8 @@ public class TerminalStart {
     private static volatile boolean approveAllRemaining = false;
     private static volatile HttpURLConnection activeConnection = null;
     private static volatile Process activeProcess = null;
+    private static final ThreadLocal<AgentRun> currentRun = new ThreadLocal<>();
+    private static volatile AgentRun legacyActiveRun;
 
     private volatile String apiUrl;
     private volatile String apiKey;
@@ -36,9 +38,13 @@ public class TerminalStart {
     public static void setCurrentCwd(String cwd) { currentCwd.set(cwd); }
     public static void clearCurrentCwd() { currentCwd.remove(); }
     public static String getCurrentCwd() {
+        AgentRun run = currentRun.get();
+        if (run != null && run.getCwd() != null && !run.getCwd().trim().isEmpty()) return run.getCwd();
         String cwd = currentCwd.get();
         return cwd != null ? cwd : System.getProperty("user.dir");
     }
+
+    public static AgentRun getCurrentRun() { return currentRun.get(); }
 
     // Web confirmation mechanism
     private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<Boolean>> pendingConfirmations = new java.util.concurrent.ConcurrentHashMap<>();
@@ -60,10 +66,17 @@ public class TerminalStart {
     }
 
     public static void setApproveAllRemaining(boolean approve) {
+        AgentRun run = currentRun.get();
+        if (run != null) {
+            run.setApproveAllRemaining(approve);
+            return;
+        }
         approveAllRemaining = approve;
     }
 
     public static boolean isApproveAllRemaining() {
+        AgentRun run = currentRun.get();
+        if (run != null) return run.isApproveAllRemaining();
         return approveAllRemaining;
     }
 
@@ -72,6 +85,11 @@ public class TerminalStart {
     }
 
     public static void requestStop() {
+        AgentRun run = legacyActiveRun;
+        if (run != null) {
+            run.requestStop();
+            return;
+        }
         stopRequested = true;
         approveAllRemaining = false;
         HttpURLConnection conn = activeConnection;
@@ -92,16 +110,28 @@ public class TerminalStart {
     }
 
     public static void registerActiveProcess(Process process) {
+        AgentRun run = currentRun.get();
+        if (run != null) {
+            run.registerProcess(process);
+            return;
+        }
         activeProcess = process;
     }
 
     public static void clearActiveProcess(Process process) {
+        AgentRun run = currentRun.get();
+        if (run != null) {
+            run.clearProcess(process);
+            return;
+        }
         if (activeProcess == process) {
             activeProcess = null;
         }
     }
 
     public static boolean isStopRequested() {
+        AgentRun run = currentRun.get();
+        if (run != null) return run.isStopRequested();
         return stopRequested;
     }
 
@@ -122,10 +152,16 @@ public class TerminalStart {
     }
 
     private String getOverrideModel() {
+        AgentRun run = currentRun.get();
+        if (run != null && run.getModel() != null && !run.getModel().trim().isEmpty()) return run.getModel();
         return requestModelOverrides.get(Thread.currentThread().getId());
     }
 
     private String[] getOverrideConn() {
+        AgentRun run = currentRun.get();
+        if (run != null && (run.getApiUrl() != null || run.getApiKey() != null)) {
+            return new String[]{run.getApiUrl(), run.getApiKey()};
+        }
         return requestConnOverrides.get(Thread.currentThread().getId());
     }
     private final List<JsonObject> messages = new ArrayList<>();
@@ -145,6 +181,7 @@ public class TerminalStart {
 
     private JsonArray cachedMessagesJson;
     private boolean messagesDirty = true;
+    private volatile AgentRun lastCompletedRun;
 
     public TerminalStart(String apiUrl, String apiKey, String model, SessionManager sessionManager) {
         this.apiUrl = apiUrl;
@@ -241,9 +278,29 @@ public class TerminalStart {
                 messages.add(message);
             }
         }
+        JsonObject previousTask = sessionManager.loadTaskState(sessionId);
+        if (previousTask != null) {
+            JsonObject checkpoint = new JsonObject();
+            checkpoint.addProperty("role", "system");
+            checkpoint.addProperty("content", buildPersistedTaskCheckpoint(previousTask));
+            messages.add(1, checkpoint);
+        }
         currentSessionId = sessionId;
         messagesDirty = true;
         return true;
+    }
+
+    private String buildPersistedTaskCheckpoint(JsonObject state) {
+        StringBuilder text = new StringBuilder("上次任务检查点");
+        if (state.has("objective")) text.append("\n目标: ").append(state.get("objective").getAsString());
+        if (state.has("phase")) text.append("\n阶段: ").append(state.get("phase").getAsString());
+        if (state.has("nextAction")) text.append("\n下一步: ").append(state.get("nextAction").getAsString());
+        if (state.has("blockedReason") && !state.get("blockedReason").getAsString().isEmpty()) {
+            text.append("\n阻塞原因: ").append(state.get("blockedReason").getAsString());
+        }
+        if (state.has("modifiedFiles")) text.append("\n已修改文件: ").append(state.get("modifiedFiles").toString());
+        text.append("\n如用户要求继续，请先核对工作区现状再执行。");
+        return text.toString();
     }
 
     public String getCurrentSessionId() {
@@ -277,6 +334,7 @@ public class TerminalStart {
         all.add(new EditFileTool());
         all.add(new WriteFileTool());
         all.add(new RunCommandTool());
+        all.add(new UpdateTaskTool());
 
         List<Tool> list = new ArrayList<>();
         toolMap.clear();
@@ -290,12 +348,31 @@ public class TerminalStart {
     }
 
     public ChatResult chat(String userInput) throws Exception {
+        AgentRun run = new AgentRun(null, userInput, model, apiUrl, apiKey, getCurrentCwd());
+        return chat(userInput, run);
+    }
+
+    public ChatResult chat(String userInput, AgentRun run) throws Exception {
+        bindRun(run, null);
+        try {
+            return chatBound(userInput, run);
+        } catch (Exception e) {
+            if (!run.isStopRequested()) run.getTaskState().interrupt(e.getMessage());
+            throw e;
+        } finally {
+            unbindRun(run);
+        }
+    }
+
+    private ChatResult chatBound(String userInput, AgentRun run) throws Exception {
         long startTime = System.currentTimeMillis();
         prepareUserInput(userInput);
 
         JsonObject message;
         for (int round = 0; round < ToolConstants.MAX_TOOL_ROUNDS; round++) {
-            if (stopRequested) {
+            run.getTaskState().incrementRound();
+            if (isStopRequested()) {
+                run.getTaskState().cancel();
                 return new ChatResult("(对话已被用户终止)", System.currentTimeMillis() - startTime, estimateTokens());
             }
             message = callApiWithRetry(false);
@@ -306,6 +383,8 @@ public class TerminalStart {
             if (noToolCalls(toolCalls)) {
                 messages.add(message);
                 persistMessage(message);
+                int finalization = finalizeOrRequestVerification(run);
+                if (finalization == 1) continue;
                 long duration = System.currentTimeMillis() - startTime;
                 return new ChatResult(content != null ? content : "(无回复)", duration, estimateTokens());
             }
@@ -315,23 +394,47 @@ public class TerminalStart {
             processToolCalls(toolCalls.getAsJsonArray());
         }
 
+        run.getTaskState().block("达到最大工具调用轮次 " + ToolConstants.MAX_TOOL_ROUNDS);
         long duration = System.currentTimeMillis() - startTime;
         return new ChatResult("(达到最大工具调用轮次)", duration, estimateTokens());
     }
 
     public ChatResult chatStream(String userInput, StreamCallback callback) throws Exception {
+        AgentRun run = new AgentRun(null, userInput, model, apiUrl, apiKey, getCurrentCwd());
+        return chatStream(userInput, callback, run);
+    }
+
+    public ChatResult chatStream(String userInput, StreamCallback callback, AgentRun run) throws Exception {
+        bindRun(run, callback);
+        try {
+            return chatStreamBound(userInput, callback, run);
+        } catch (Exception e) {
+            if (!run.isStopRequested()) {
+                run.getTaskState().interrupt(e.getMessage());
+                callback.onTaskUpdate(run.getTaskState().toJson());
+            }
+            throw e;
+        } finally {
+            unbindRun(run);
+        }
+    }
+
+    private ChatResult chatStreamBound(String userInput, StreamCallback callback, AgentRun run) throws Exception {
         long startTime = System.currentTimeMillis();
         prepareUserInput(userInput);
 
         JsonObject message;
         for (int round = 0; round < ToolConstants.MAX_TOOL_ROUNDS; round++) {
-            if (stopRequested) {
+            run.getTaskState().incrementRound();
+            if (isStopRequested()) {
+                run.getTaskState().cancel();
                 callback.onComplete(new ChatResult("(对话已被用户终止)", System.currentTimeMillis() - startTime, estimateTokens()));
                 return new ChatResult("(对话已被用户终止)", System.currentTimeMillis() - startTime, estimateTokens());
             }
 
-            message = callApiStreaming(callback);
-            if (stopRequested) {
+            message = callApiStreamingWithRetry(callback);
+            if (isStopRequested()) {
+                run.getTaskState().cancel();
                 ChatResult result = new ChatResult("(对话已被用户终止)", System.currentTimeMillis() - startTime, estimateTokens());
                 callback.onComplete(result);
                 return result;
@@ -341,6 +444,9 @@ public class TerminalStart {
 
             JsonElement toolCalls = message.get("tool_calls");
             if (noToolCalls(toolCalls)) {
+                int finalization = finalizeOrRequestVerification(run);
+                callback.onTaskUpdate(run.getTaskState().toJson());
+                if (finalization == 1) continue;
                 long duration = System.currentTimeMillis() - startTime;
                 String reply = message.has("content") && !message.get("content").isJsonNull()
                         ? message.get("content").getAsString() : "(无回复)";
@@ -352,6 +458,8 @@ public class TerminalStart {
             processToolCallsStreaming(toolCalls.getAsJsonArray(), callback);
         }
 
+        run.getTaskState().block("达到最大工具调用轮次 " + ToolConstants.MAX_TOOL_ROUNDS);
+        callback.onTaskUpdate(run.getTaskState().toJson());
         long duration = System.currentTimeMillis() - startTime;
         ChatResult result = new ChatResult("(达到最大工具调用轮次)", duration, estimateTokens());
         callback.onComplete(result);
@@ -360,12 +468,70 @@ public class TerminalStart {
 
     private void prepareUserInput(String userInput) {
         ensureSession(userInput);
+        AgentRun run = currentRun.get();
+        if (run != null) run.getTaskState().setSessionId(currentSessionId);
         JsonObject userMsg = new JsonObject();
         userMsg.addProperty("role", "user");
         userMsg.addProperty("content", userInput);
         messages.add(userMsg);
         persistMessage(userMsg);
         messagesDirty = true;
+    }
+
+    private void bindRun(final AgentRun run, final StreamCallback callback) {
+        currentRun.set(run);
+        run.setRunning(true);
+        legacyActiveRun = run;
+        final boolean[] announced = {false};
+        run.getTaskState().setChangeListener(() -> {
+            if (callback != null && !announced[0] && !run.getTaskState().getSessionId().isEmpty()) {
+                announced[0] = true;
+                callback.onRunStarted(run.getRunId(), run.getTaskState().getSessionId());
+            }
+            if (sessionManager != null && !run.getTaskState().getSessionId().isEmpty()) {
+                sessionManager.saveTaskState(run.getTaskState().getSessionId(), run.getTaskState().toPersistentJson());
+            }
+            if (callback != null) callback.onTaskUpdate(run.getTaskState().toJson());
+        });
+    }
+
+    private void unbindRun(AgentRun run) {
+        currentRun.remove();
+        run.getTaskState().setChangeListener(null);
+        run.setRunning(false);
+        lastCompletedRun = run;
+        if (legacyActiveRun == run) legacyActiveRun = null;
+    }
+
+    public List<String> rollbackLastRun() throws IOException {
+        AgentRun run = lastCompletedRun;
+        if (run == null || !run.getChangeJournal().hasChanges()) return Collections.emptyList();
+        List<String> restored = run.getChangeJournal().rollback();
+        run.getTaskState().markRolledBack();
+        if (sessionManager != null && !run.getTaskState().getSessionId().isEmpty()) {
+            sessionManager.saveTaskState(run.getTaskState().getSessionId(), run.getTaskState().toPersistentJson());
+        }
+        return restored;
+    }
+
+    private int finalizeOrRequestVerification(AgentRun run) {
+        TaskState state = run.getTaskState();
+        if (state.getPhase() == TaskState.Phase.BLOCKED) return 2;
+        if (state.hasWrites() && !state.isVerifiedAfterLastWrite()) {
+            if (!state.isVerificationReminderSent()) {
+                state.markVerificationReminderSent();
+                JsonObject reminder = new JsonObject();
+                reminder.addProperty("role", "system");
+                reminder.addProperty("content", "你已经修改了文件，但尚未完成成功验证。请运行相关测试、构建或静态检查；若确实无法验证，请使用 update_task 将任务标记为 BLOCKED 并说明原因。不要声称任务已经完成。");
+                messages.add(reminder);
+                messagesDirty = true;
+                return 1;
+            }
+            state.block("文件已修改，但没有成功的修改后验证");
+            return 2;
+        }
+        state.complete();
+        return 0;
     }
 
     private static boolean noToolCalls(JsonElement toolCalls) {
@@ -375,7 +541,9 @@ public class TerminalStart {
     // === TOOL CALL PROCESSING ===
     private void processToolCalls(JsonArray toolCalls) throws IOException {
         for (JsonElement tc : toolCalls) {
-            if (stopRequested) return;
+            if (isStopRequested()) return;
+            AgentRun activeRun = currentRun.get();
+            if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
             JsonObject toolCall = tc.getAsJsonObject();
             String fnName = toolCall.getAsJsonObject("function").get("name").getAsString();
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
@@ -388,16 +556,19 @@ public class TerminalStart {
                     continue;
                 }
             }
-            if (stopRequested) return;
+            if (isStopRequested()) return;
 
             System.out.println("[调用工具] " + fnName + "(" + fnArgs + ")");
             executeAndAddToolResult(fnName, fnArgs, callId);
+            if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
         }
     }
 
     private void processToolCallsStreaming(JsonArray toolCalls, StreamCallback callback) throws IOException {
         for (JsonElement tc : toolCalls) {
-            if (stopRequested) return;
+            if (isStopRequested()) return;
+            AgentRun activeRun = currentRun.get();
+            if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
             JsonObject toolCall = tc.getAsJsonObject();
             String fnName = toolCall.getAsJsonObject("function").get("name").getAsString();
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
@@ -405,23 +576,13 @@ public class TerminalStart {
 
             if (shouldConfirm(fnName, fnArgs)) {
                 boolean approved;
-                if (approveAllRemaining) {
+                AgentRun run = currentRun.get();
+                if (run != null && run.isApproveAllRemaining()) {
                     approved = true;
-                } else if (terminal == null) {
-                    String confirmKey = createConfirmationRequest();
-                    callback.onConfirmRequired(confirmKey, fnName, fnArgs);
-                    try {
-                        java.util.concurrent.CompletableFuture<Boolean> future = pendingConfirmations.get(confirmKey);
-                        if (future != null) {
-                            approved = future.get(300, java.util.concurrent.TimeUnit.SECONDS);
-                        } else {
-                            approved = false;
-                        }
-                    } catch (Exception e) {
-                        approved = false;
-                    } finally {
-                        pendingConfirmations.remove(confirmKey);
-                    }
+                } else if (terminal == null && run != null) {
+                    String confirmKey = run.createConfirmationRequest();
+                    callback.onConfirmRequired(run.getRunId(), confirmKey, fnName, fnArgs);
+                    approved = run.awaitConfirmation(confirmKey, 300, java.util.concurrent.TimeUnit.SECONDS);
                 } else {
                     callback.onToolCall(fnName, fnArgs, "confirming");
                     approved = confirmAction(fnName, fnArgs);
@@ -432,12 +593,17 @@ public class TerminalStart {
                     continue;
                 }
             }
-            if (stopRequested) return;
+            if (isStopRequested()) return;
 
             callback.onToolCall(fnName, fnArgs, "running");
             System.out.println("\n[调用工具] " + fnName + "(" + fnArgs + ")");
             ToolResult result = executeAndAddToolResult(fnName, fnArgs, callId);
             callback.onToolResult(fnName, fnArgs, "done", result.getDetails());
+            if ("run_command".equals(fnName) && result.getDetails().has("verification")
+                    && result.getDetails().get("verification").getAsBoolean()) {
+                callback.onVerification(result.getDetails());
+            }
+            if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
         }
     }
 
@@ -468,6 +634,17 @@ public class TerminalStart {
     }
 
     private ToolResult executeAndAddToolResult(String fnName, String fnArgs, String callId) {
+        AgentRun run = currentRun.get();
+        if (run != null) {
+            run.getTaskState().markToolActivity(fnName);
+            ToolResult previous = run.getExecutedResult(callId);
+            if (previous != null) {
+                JsonObject replayDetails = previous.getDetails().deepCopy();
+                replayDetails.addProperty("replayed", true);
+                return addToolResultMessage(callId,
+                        new ToolResult(previous.getContent() + "\n(相同 tool_call_id 已执行，已复用原结果)", replayDetails));
+            }
+        }
         Tool tool = toolMap.get(fnName);
         ToolResult result;
         if (tool == null) {
@@ -486,7 +663,31 @@ public class TerminalStart {
                 result = new ToolResult("工具参数解析失败: " + e.getMessage() + "\n请重新生成合法 JSON 参数后再调用此工具。", details);
             }
         }
+        if (run != null) {
+            boolean failed = result.getDetails().has("error")
+                    || (result.getDetails().has("exitCode") && result.getDetails().get("exitCode").getAsInt() != 0)
+                    || (result.getDetails().has("timedOut") && result.getDetails().get("timedOut").getAsBoolean());
+            if (failed) {
+                String error = result.getDetails().has("error")
+                        ? result.getDetails().get("error").getAsString() : result.getContent();
+                int repeated = run.recordFailure(fnName, fnArgs, error);
+                if (repeated >= 3) {
+                    JsonObject details = result.getDetails().deepCopy();
+                    details.addProperty("repeatedFailure", repeated);
+                    details.addProperty("blocked", true);
+                    result = new ToolResult(result.getContent()
+                            + "\n同一工具调用已连续失败 " + repeated + " 次，禁止原样重试；请调整参数或向用户说明阻塞原因。", details);
+                    run.getTaskState().block("同一工具调用连续失败 " + repeated + " 次: " + fnName);
+                }
+            } else {
+                run.clearFailureStreak();
+            }
+            run.recordExecutedResult(callId, result);
+        }
+        return addToolResultMessage(callId, result);
+    }
 
+    private ToolResult addToolResultMessage(String callId, ToolResult result) {
         JsonObject toolMsg = new JsonObject();
         toolMsg.addProperty("role", "tool");
         toolMsg.addProperty("tool_call_id", callId);
@@ -577,6 +778,7 @@ public class TerminalStart {
                 return callApi(stream);
             } catch (IOException e) {
                 lastException = e;
+                if (!(e instanceof RetryableApiException)) throw e;
                 if (attempt < retries - 1) {
                     try {
                         Thread.sleep((long) (ToolConstants.API_RETRY_BASE_DELAY_MS * Math.pow(2, attempt)));
@@ -605,7 +807,7 @@ public class TerminalStart {
 
         URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        activeConnection = conn;
+        registerActiveConnection(conn);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
@@ -633,8 +835,10 @@ public class TerminalStart {
         }
 
         if (statusCode != 200) {
-            if (activeConnection == conn) activeConnection = null;
-            throw new IOException("API error [" + statusCode + "]: " + truncateError(responseBody));
+            clearActiveConnection(conn);
+            String message = "API error [" + statusCode + "]: " + truncateError(responseBody);
+            if (statusCode == 429 || statusCode >= 500) throw new RetryableApiException(message);
+            throw new IOException(message);
         }
 
         try {
@@ -642,6 +846,12 @@ public class TerminalStart {
             if (response != null && response.has("choices") && response.get("choices").isJsonArray()
                     && response.getAsJsonArray("choices").size() > 0) {
                 JsonObject choice = response.getAsJsonArray("choices").get(0).getAsJsonObject();
+                if (choice.has("finish_reason") && !choice.get("finish_reason").isJsonNull()) {
+                    String reason = choice.get("finish_reason").getAsString();
+                    if ("length".equals(reason) || "content_filter".equals(reason)) {
+                        throw new IOException("模型响应未正常完成: finish_reason=" + reason);
+                    }
+                }
                 if (choice.has("message") && choice.get("message").isJsonObject()) {
                     return choice.getAsJsonObject("message");
                 }
@@ -651,8 +861,30 @@ public class TerminalStart {
             }
             throw new IOException("API response missing choices[0].message");
         } finally {
-            if (activeConnection == conn) activeConnection = null;
+            clearActiveConnection(conn);
         }
+    }
+
+    private JsonObject callApiStreamingWithRetry(StreamCallback callback) throws IOException {
+        IOException last = null;
+        for (int attempt = 0; attempt < ToolConstants.API_MAX_RETRIES; attempt++) {
+            try {
+                return callApiStreaming(callback);
+            } catch (StreamInterruptedException e) {
+                if (e.outputStarted || attempt >= ToolConstants.API_MAX_RETRIES - 1) throw e;
+                last = e;
+            } catch (IOException e) {
+                last = e;
+                if (!(e instanceof RetryableApiException) || attempt >= ToolConstants.API_MAX_RETRIES - 1) throw e;
+            }
+            try {
+                Thread.sleep((long) (ToolConstants.API_RETRY_BASE_DELAY_MS * Math.pow(2, attempt)));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw last;
+            }
+        }
+        throw last;
     }
 
     private JsonObject callApiStreaming(StreamCallback callback) throws IOException {
@@ -668,7 +900,7 @@ public class TerminalStart {
 
         URL url = new URL(effectiveApiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        activeConnection = conn;
+        registerActiveConnection(conn);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Authorization", "Bearer " + effectiveApiKey);
@@ -693,19 +925,24 @@ public class TerminalStart {
                 while ((line = br.readLine()) != null) sb.append(line);
                 errorBody = sb.toString();
             }
-            if (activeConnection == conn) activeConnection = null;
-            throw new IOException("API error [" + statusCode + "]: " + truncateError(errorBody));
+            clearActiveConnection(conn);
+            String message = "API error [" + statusCode + "]: " + truncateError(errorBody);
+            if (statusCode == 429 || statusCode >= 500) throw new RetryableApiException(message);
+            throw new IOException(message);
         }
 
         StringBuilder fullContent = new StringBuilder();
         StringBuilder fullThinking = new StringBuilder();
         Map<Integer, JsonObject> toolCallsMap = new LinkedHashMap<>();
+        boolean sawDone = false;
+        String finishReason = null;
+        int malformedChunks = 0;
 
         try (BufferedReader br = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             String line;
             int emptyLineCount = 0;
             while ((line = br.readLine()) != null) {
-                if (stopRequested) {
+                if (isStopRequested()) {
                     break;
                 }
                 if (line.isEmpty()) {
@@ -717,12 +954,16 @@ public class TerminalStart {
                 if (!line.startsWith("data: ")) continue;
 
                 String data = line.substring(6).trim();
-                if ("[DONE]".equals(data)) break;
+                if ("[DONE]".equals(data)) {
+                    sawDone = true;
+                    break;
+                }
 
                 JsonObject chunk;
                 try {
                     chunk = GSON.fromJson(data, JsonObject.class);
                 } catch (Exception e) {
+                    malformedChunks++;
                     continue;
                 }
 
@@ -730,10 +971,7 @@ public class TerminalStart {
                 JsonObject choice = chunk.getAsJsonArray("choices").get(0).getAsJsonObject();
 
                 if (choice.has("finish_reason") && !choice.get("finish_reason").isJsonNull()) {
-                    String finishReason = choice.get("finish_reason").getAsString();
-                    if ("length".equals(finishReason)) {
-                        callback.onError("(响应因长度限制被截断)");
-                    }
+                    finishReason = choice.get("finish_reason").getAsString();
                 }
 
                 JsonObject delta = choice.getAsJsonObject("delta");
@@ -757,11 +995,28 @@ public class TerminalStart {
                 }
             }
         } catch (IOException e) {
-            if (!stopRequested) {
-                throw e;
+            if (!isStopRequested()) {
+                boolean started = fullContent.length() > 0 || fullThinking.length() > 0 || !toolCallsMap.isEmpty();
+                throw new StreamInterruptedException("模型流中断: " + e.getMessage(), started, e);
             }
         } finally {
-            if (activeConnection == conn) activeConnection = null;
+            clearActiveConnection(conn);
+        }
+
+        if (!isStopRequested()) {
+            boolean started = fullContent.length() > 0 || fullThinking.length() > 0 || !toolCallsMap.isEmpty();
+            if ("length".equals(finishReason)) {
+                throw new StreamInterruptedException("模型响应因长度限制被截断", started, null);
+            }
+            if (finishReason != null && !"stop".equals(finishReason) && !"tool_calls".equals(finishReason)) {
+                throw new StreamInterruptedException("模型响应未正常完成: finish_reason=" + finishReason, started, null);
+            }
+            if (malformedChunks > 0) {
+                throw new StreamInterruptedException("模型流包含 " + malformedChunks + " 个损坏的数据块", started, null);
+            }
+            if (!sawDone && finishReason == null) {
+                throw new StreamInterruptedException("模型流未收到正常结束标记", started, null);
+            }
         }
 
         if (fullContent.length() == 0 && fullThinking.length() > 0) {
@@ -770,6 +1025,31 @@ public class TerminalStart {
         JsonObject message = buildAssistantMessage(fullContent, toolCallsMap);
         messagesDirty = true;
         return message;
+    }
+
+    private void registerActiveConnection(HttpURLConnection connection) {
+        AgentRun run = currentRun.get();
+        if (run != null) run.registerConnection(connection);
+        else activeConnection = connection;
+    }
+
+    private void clearActiveConnection(HttpURLConnection connection) {
+        AgentRun run = currentRun.get();
+        if (run != null) run.clearConnection(connection);
+        else if (activeConnection == connection) activeConnection = null;
+    }
+
+    private static final class StreamInterruptedException extends IOException {
+        final boolean outputStarted;
+
+        StreamInterruptedException(String message, boolean outputStarted, Throwable cause) {
+            super(message, cause);
+            this.outputStarted = outputStarted;
+        }
+    }
+
+    private static final class RetryableApiException extends IOException {
+        RetryableApiException(String message) { super(message); }
     }
 
     private void accumulateToolCallsDelta(Map<Integer, JsonObject> toolCallsMap, JsonArray tcArray) {
@@ -887,20 +1167,9 @@ public class TerminalStart {
         StringBuilder sb = new StringBuilder();
         sb.append("上下文已压缩：为控制请求长度，省略了较早的 ")
                 .append(omitted).append(" 条消息。");
-        int samples = 0;
-        for (int i = fromInclusive; i < toExclusive && samples < 6; i++) {
-            JsonObject msg = messages.get(i);
-            String role = msg.has("role") ? msg.get("role").getAsString() : "unknown";
-            if (!msg.has("content") || msg.get("content").isJsonNull()) continue;
-            String content = msg.get("content").getAsString().replaceAll("\\s+", " ").trim();
-            if (content.isEmpty()) continue;
-            if (content.length() > 120) {
-                content = content.substring(0, 120) + "...";
-            }
-            sb.append("\n- ").append(role).append(": ").append(content);
-            samples++;
-        }
-        sb.append("\n请基于保留的近期上下文继续任务；如缺少细节，请主动重新读取项目文件。");
+        AgentRun run = currentRun.get();
+        if (run != null) sb.append("\n").append(run.getTaskState().buildCheckpoint());
+        sb.append("\n旧对话原文不再可靠；继续前请根据检查点重新读取相关文件并核对当前工作区。");
         return sb.toString();
     }
 
@@ -912,7 +1181,7 @@ public class TerminalStart {
         if (terminal == null) {
             return false;
         }
-        if (approveAllRemaining) {
+        if (isApproveAllRemaining()) {
             return true;
         }
         PrintWriter w = terminal.writer();
@@ -929,7 +1198,7 @@ public class TerminalStart {
                 return true;
             }
             if (c == 'a' || c == 'A') {
-                approveAllRemaining = true;
+                setApproveAllRemaining(true);
                 w.println("a (全部批准)");
                 w.flush();
                 return true;
@@ -1295,7 +1564,17 @@ public class TerminalStart {
     }
 
     private static void handleUndo(TerminalStart agent) {
-        System.out.println("  \u001B[33m当前版本不再自动生成 .bak 文件。请根据会话中的 diff 手动回滚，或让 Agent 按 diff 反向修改。\u001B[0m");
+        try {
+            List<String> restored = agent.rollbackLastRun();
+            if (restored.isEmpty()) {
+                System.out.println("  \u001B[33m最近一次任务没有可回滚的文件修改。\u001B[0m");
+            } else {
+                System.out.println("  \u001B[36m已回滚 " + restored.size() + " 个文件:\u001B[0m");
+                for (String file : restored) System.out.println("    " + file);
+            }
+        } catch (IOException e) {
+            System.out.println("  \u001B[31m回滚失败: " + e.getMessage() + "\u001B[0m");
+        }
     }
 
     private static void printBanner(String model) {

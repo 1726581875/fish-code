@@ -2,6 +2,8 @@ package org.example.tool;
 
 import com.google.gson.*;
 import org.example.TerminalStart;
+import org.example.core.AgentRun;
+import org.example.core.TaskState;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +19,12 @@ public class RunCommandTool extends Tool {
     private static final Pattern SAFE_INSPECTION_COMMAND = Pattern.compile(
             "^(pwd|ls|rg|grep|head|tail|wc|which|type|java\\s+-version|javac\\s+-version)(\\s|$)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern DIRECT_FILE_MUTATION = Pattern.compile(
+            "(^|[;&|]\\s*|\\s)(sed\\s+[^\\n]*-[a-z]*i|perl\\s+[^\\n]*-[a-z]*pi|tee|touch|cp|mv|patch)\\b|"
+                    + "\\bgit\\s+(apply|checkout|restore|reset|clean)\\b|"
+                    + "\\b(npm|pnpm|yarn)\\s+(install|add|remove|uninstall)\\b|"
+                    + "\\b(npm|pnpm|yarn)\\s+run\\s+[^\\s]*(format|fix)[^\\s]*|"
+                    + "(^|[^<])>{1,2}(?!&)", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern[] DANGEROUS_WIN = {
             Pattern.compile("\\bdel\\b", Pattern.CASE_INSENSITIVE),
@@ -47,7 +55,9 @@ public class RunCommandTool extends Tool {
 
     public RunCommandTool() {
         super("run_command", "执行一个shell命令并返回输出结果",
-                new Param("command", "string", "要执行的命令", true));
+                new Param("command", "string", "要执行的命令", true),
+                new Param("timeoutSeconds", "integer", "超时秒数，默认30，最大600", false),
+                new Param("maxOutputChars", "integer", "返回输出字符数，默认8000，最大50000", false));
     }
 
     public static boolean isReadOnlyCommand(String command) {
@@ -65,6 +75,36 @@ public class RunCommandTool extends Tool {
                 || SAFE_INSPECTION_COMMAND.matcher(trimmed).find();
     }
 
+    public static boolean isVerificationCommand(String command) {
+        return verificationLevel(command) != TaskState.VerificationLevel.NONE;
+    }
+
+    public static TaskState.VerificationLevel verificationLevel(String command) {
+        if (command == null) return TaskState.VerificationLevel.NONE;
+        String value = command.trim().toLowerCase();
+        if (value.isEmpty() || value.matches(".*(\\|\\|\\s*(true|:)|;\\s*(true|:)(\\s|$)).*")) {
+            return TaskState.VerificationLevel.NONE;
+        }
+        if (value.matches(".*(^|[;&|]\\s*)git\\s+diff\\s+--check(\\s|$).*")) return TaskState.VerificationLevel.SANITY;
+        if (value.matches(".*(^|[;&|]\\s*)(test\\s+|\\[\\s+).*")) return TaskState.VerificationLevel.SANITY;
+        if (value.matches(".*(^|[;&|]\\s*)(pytest|jest|vitest)(\\s|$).*"
+                ) || value.matches(".*(^|[;&|]\\s*)(cargo|go)\\s+test(\\s|$).*")) return TaskState.VerificationLevel.TEST;
+        if (value.matches(".*(^|[;&|]\\s*)(mvn|mvnw|\\./mvnw|gradle|gradlew|\\./gradlew)\\b[^\\n]*(test|verify)\\b.*")
+                || value.matches(".*(^|[;&|]\\s*)(npm|pnpm|yarn)\\s+(test|run\\s+test)(\\s|$).*")) {
+            return TaskState.VerificationLevel.TEST;
+        }
+        if (value.matches(".*(^|[;&|]\\s*)(mvn|mvnw|\\./mvnw|gradle|gradlew|\\./gradlew)\\b[^\\n]*(package|compile|build)\\b.*")
+                || value.matches(".*(^|[;&|]\\s*)(npm|pnpm|yarn)\\s+run\\s+(build|typecheck)(\\s|$).*")) {
+            return TaskState.VerificationLevel.BUILD;
+        }
+        if (value.matches(".*(^|[;&|]\\s*)(javac|tsc)(\\s|$).*")) return TaskState.VerificationLevel.BUILD;
+        if (value.matches(".*(^|[;&|]\\s*)(eslint|ruff|shellcheck|stylelint)(\\s|$).*")) return TaskState.VerificationLevel.STATIC;
+        if (value.matches(".*(^|[;&|]\\s*)(npm|pnpm|yarn)\\s+run\\s+(lint|check)(\\s|$).*")) {
+            return TaskState.VerificationLevel.STATIC;
+        }
+        return TaskState.VerificationLevel.NONE;
+    }
+
     @Override
     protected String doExecute(JsonObject args) throws Exception {
         return doExecuteDetailed(args).getContent();
@@ -73,12 +113,22 @@ public class RunCommandTool extends Tool {
     @Override
     protected ToolResult doExecuteDetailed(JsonObject args) throws Exception {
         String command = args.get("command").getAsString();
+        int timeoutSeconds = args.has("timeoutSeconds") ? args.get("timeoutSeconds").getAsInt()
+                : ToolConstants.COMMAND_TIMEOUT_SECONDS;
+        timeoutSeconds = Math.max(1, Math.min(timeoutSeconds, ToolConstants.COMMAND_MAX_TIMEOUT_SECONDS));
+        int maxOutputChars = args.has("maxOutputChars") ? args.get("maxOutputChars").getAsInt()
+                : ToolConstants.OUTPUT_TRUNCATE_CHARS;
+        maxOutputChars = Math.max(1000, Math.min(maxOutputChars, ToolConstants.COMMAND_MAX_OUTPUT_CHARS));
         long start = System.currentTimeMillis();
         JsonObject details = new JsonObject();
         details.addProperty("type", "command");
         details.addProperty("command", command);
         details.addProperty("cwd", TerminalStart.getCurrentCwd());
         details.addProperty("risk", riskLevel(command));
+        details.addProperty("timeoutSeconds", timeoutSeconds);
+        TaskState.VerificationLevel verificationLevel = verificationLevel(command);
+        details.addProperty("verification", verificationLevel != TaskState.VerificationLevel.NONE);
+        details.addProperty("verificationLevel", verificationLevel.name());
 
         java.io.File cwd = new java.io.File(TerminalStart.getCurrentCwd()).getCanonicalFile();
         if (!cwd.exists() || !cwd.isDirectory()) {
@@ -92,6 +142,11 @@ public class RunCommandTool extends Tool {
             details.addProperty("error", rejection);
             return new ToolResult(rejection, details);
         }
+        if (DIRECT_FILE_MUTATION.matcher(command).find()) {
+            details.addProperty("blocked", true);
+            details.addProperty("error", "untracked_workspace_mutation");
+            return new ToolResult("命令包含无法安全记录和回滚的文件修改。请使用 edit_file/write_file；依赖变更请拆成明确步骤交给用户处理。", details);
+        }
 
         ProcessBuilder pb;
         if (IS_WINDOWS) {
@@ -104,7 +159,7 @@ public class RunCommandTool extends Tool {
         Process process = pb.start();
         TerminalStart.registerActiveProcess(process);
 
-        StringBuilder output = new StringBuilder();
+        BoundedOutput output = new BoundedOutput(maxOutputChars);
         java.util.concurrent.ExecutorService readExecutor = java.util.concurrent.Executors
                 .newSingleThreadExecutor(r -> {
                     Thread t = new Thread(r);
@@ -116,22 +171,25 @@ public class RunCommandTool extends Tool {
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
+                    output.append(line + "\n");
                 }
             } catch (IOException e) {
-                output.append("读取输出出错: ").append(e.getMessage());
+                output.append("读取输出出错: " + e.getMessage());
             }
         });
 
         try {
-            boolean finished = process.waitFor(ToolConstants.COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                AgentRun.destroyProcessTree(process);
                 readFuture.cancel(true);
                 details.addProperty("timedOut", true);
+                details.addProperty("exitCode", -1);
                 details.addProperty("durationMs", System.currentTimeMillis() - start);
-                String timedOutOutput = truncateOutput(output.toString() + "\n(命令超时，已强制终止)", details);
+                output.append("\n(命令超时，已强制终止)");
+                String timedOutOutput = output.snapshot(details);
                 details.addProperty("output", timedOutOutput);
+                recordVerification(command, -1, true, timedOutOutput);
                 return new ToolResult(timedOutOutput, details);
             }
             try {
@@ -146,11 +204,12 @@ public class RunCommandTool extends Tool {
 
         int exitCode = process.exitValue();
         String prefix = exitCode != 0 ? "(退出码: " + exitCode + ")\n" : "";
-        String result = truncateOutput(prefix + output.toString(), details);
+        String result = prefix + output.snapshot(details);
         String content = result.isEmpty() ? "(命令执行完毕，无输出)" : result.trim();
         details.addProperty("exitCode", exitCode);
         details.addProperty("durationMs", System.currentTimeMillis() - start);
         details.addProperty("output", content);
+        recordVerification(command, exitCode, false, content);
         return new ToolResult(content, details);
     }
 
@@ -194,13 +253,60 @@ public class RunCommandTool extends Tool {
         return null;
     }
 
-    private String truncateOutput(String output, JsonObject details) {
-        if (output.length() > ToolConstants.OUTPUT_TRUNCATE_CHARS) {
+    private String truncateOutput(String output, JsonObject details, int maxChars) {
+        if (output.length() > maxChars) {
             details.addProperty("truncated", true);
-            return output.substring(0, ToolConstants.OUTPUT_TRUNCATE_CHARS) + "\n...(输出已截断)";
+            int headChars = maxChars / 2;
+            int tailChars = maxChars - headChars;
+            return output.substring(0, headChars)
+                    + "\n...(中间输出已截断，共 " + output.length() + " 字符)...\n"
+                    + output.substring(output.length() - tailChars);
         }
         details.addProperty("truncated", false);
         return output;
+    }
+
+    private void recordVerification(String command, int exitCode, boolean timedOut, String output) {
+        AgentRun run = TerminalStart.getCurrentRun();
+        TaskState.VerificationLevel level = verificationLevel(command);
+        if (run != null && level != TaskState.VerificationLevel.NONE) {
+            run.getTaskState().recordVerification(command, exitCode, timedOut, output, level.name());
+        }
+    }
+
+    private static final class BoundedOutput {
+        private final int maxChars;
+        private final int headLimit;
+        private final int tailLimit;
+        private final StringBuilder head = new StringBuilder();
+        private final StringBuilder tail = new StringBuilder();
+        private long totalChars;
+
+        BoundedOutput(int maxChars) {
+            this.maxChars = maxChars;
+            this.headLimit = maxChars / 2;
+            this.tailLimit = maxChars - headLimit;
+        }
+
+        synchronized void append(String value) {
+            if (value == null || value.isEmpty()) return;
+            totalChars += value.length();
+            int headRemaining = headLimit - head.length();
+            if (headRemaining > 0) head.append(value, 0, Math.min(headRemaining, value.length()));
+            tail.append(value);
+            if (tail.length() > tailLimit) tail.delete(0, tail.length() - tailLimit);
+        }
+
+        synchronized String snapshot(JsonObject details) {
+            boolean truncated = totalChars > maxChars;
+            details.addProperty("truncated", truncated);
+            details.addProperty("totalOutputChars", totalChars);
+            if (!truncated) {
+                if (totalChars <= head.length()) return head.toString();
+                return head.toString() + tail.substring(Math.max(0, tail.length() - ((int) totalChars - head.length())));
+            }
+            return head + "\n...(中间输出已截断，共 " + totalChars + " 字符)...\n" + tail;
+        }
     }
 
     private String riskLevel(String command) {

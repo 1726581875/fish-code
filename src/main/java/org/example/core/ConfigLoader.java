@@ -5,27 +5,34 @@ import com.google.gson.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 
 public final class ConfigLoader {
 
     private static final Gson GSON = new Gson();
+    private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
     private static volatile JsonObject cachedConfig;
 
     private ConfigLoader() {}
 
-    public static JsonObject loadConfig() {
+    public static synchronized JsonObject loadConfig() {
         if (cachedConfig != null) {
             return cachedConfig;
         }
         JsonObject config = new JsonObject();
 
-        String userConfigPath = System.getProperty("user.home") + "/.fish-code/config.json";
+        Path userConfigPath = getUserConfigPath();
         try {
-            java.nio.file.Path path = java.nio.file.Paths.get(userConfigPath);
-            if (java.nio.file.Files.exists(path)) {
-                byte[] bytes = java.nio.file.Files.readAllBytes(path);
+            if (Files.exists(userConfigPath)) {
+                byte[] bytes = Files.readAllBytes(userConfigPath);
                 String content = new String(bytes, StandardCharsets.UTF_8);
                 config = GSON.fromJson(content, JsonObject.class);
+                if (config == null) config = new JsonObject();
                 cachedConfig = config;
                 return config;
             }
@@ -44,6 +51,35 @@ public final class ConfigLoader {
 
         cachedConfig = config;
         return config;
+    }
+
+    public static synchronized void saveConfig(JsonObject config) throws IOException {
+        if (config == null) throw new IllegalArgumentException("配置不能为空");
+        Path configPath = getUserConfigPath();
+        Path configDir = configPath.getParent();
+        Files.createDirectories(configDir);
+        Path tempPath = Files.createTempFile(configDir, "config-", ".tmp");
+        try {
+            byte[] content = PRETTY_GSON.toJson(config).getBytes(StandardCharsets.UTF_8);
+            Files.write(tempPath, content, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(tempPath, configPath, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tempPath, configPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+            cachedConfig = config.deepCopy();
+        } finally {
+            Files.deleteIfExists(tempPath);
+        }
+    }
+
+    static synchronized void clearCacheForTests() {
+        cachedConfig = null;
+    }
+
+    private static Path getUserConfigPath() {
+        return Paths.get(System.getProperty("user.home"), ".fish-code", "config.json");
     }
 
     public static String getConfigString(String key, String envKey, String defaultValue) {

@@ -19,6 +19,7 @@ public class SessionManager {
     private static final Path BASE_DIR = Paths.get(System.getProperty("user.home"), ".fish-code");
     private static final Path SESSIONS_DIR = BASE_DIR.resolve("sessions");
     private static final Path INDEX_FILE = BASE_DIR.resolve("sessions-index.json");
+    private static final Path TASKS_DIR = BASE_DIR.resolve("task-states");
 
     private static final AtomicInteger COUNTER = new AtomicInteger((int) (System.currentTimeMillis() & 0xFFFF));
     private final List<JsonObject> index = new CopyOnWriteArrayList<>();
@@ -111,6 +112,39 @@ public class SessionManager {
         saveIndex();
     }
 
+    public synchronized void saveTaskState(String sessionId, JsonObject taskState) {
+        if (sessionId == null || sessionId.trim().isEmpty() || taskState == null) return;
+        try {
+            Files.createDirectories(TASKS_DIR);
+            Path target = TASKS_DIR.resolve(sessionId + ".json");
+            Path temp = Files.createTempFile(TASKS_DIR, sessionId + "-", ".tmp");
+            try {
+                Files.write(temp, GSON.toJson(taskState).getBytes(StandardCharsets.UTF_8),
+                        StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
+                try {
+                    Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temp);
+            }
+        } catch (IOException e) {
+            System.err.println("保存任务状态失败: " + e.getMessage());
+        }
+    }
+
+    public JsonObject loadTaskState(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return null;
+        Path target = TASKS_DIR.resolve(sessionId + ".json");
+        if (!Files.exists(target)) return null;
+        try {
+            return GSON.fromJson(new String(Files.readAllBytes(target), StandardCharsets.UTF_8), JsonObject.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public List<JsonObject> loadSession(String sessionId) {
         Path sessionFile = resolveSessionFile(sessionId);
         if (sessionFile == null || !Files.exists(sessionFile)) {
@@ -148,6 +182,14 @@ public class SessionManager {
         return result;
     }
 
+    public JsonObject getSessionInfo(String sessionId) {
+        if (sessionId == null) return null;
+        for (JsonObject entry : index) {
+            if (entry.has("id") && sessionId.equals(entry.get("id").getAsString())) return deepCopy(entry);
+        }
+        return null;
+    }
+
     public String getSessionIdByIndex(int displayIndex) {
         List<JsonObject> list = listSessions();
         if (displayIndex < 1 || displayIndex > list.size()) {
@@ -168,6 +210,7 @@ public class SessionManager {
                 Files.deleteIfExists(sessionFile);
             } catch (IOException ignored) {}
         }
+        try { Files.deleteIfExists(TASKS_DIR.resolve(sessionId + ".json")); } catch (IOException ignored) {}
         for (int i = 0; i < index.size(); i++) {
             if (index.get(i).get("id").getAsString().equals(sessionId)) {
                 index.remove(i);

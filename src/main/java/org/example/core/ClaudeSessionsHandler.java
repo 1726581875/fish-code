@@ -16,10 +16,8 @@ public class ClaudeSessionsHandler implements HttpHandler {
     }
 
     private ClaudeHistoryReader getReader(HttpExchange exchange) {
-        String dir = getParam(exchange.getRequestURI().getQuery(), "dir");
-        if (dir != null && !dir.trim().isEmpty()) {
-            return new ClaudeHistoryReader(dir.trim());
-        }
+        // The history root is a server-side setting. Accepting an arbitrary
+        // query-string directory would turn this endpoint into a local file reader.
         return reader;
     }
 
@@ -82,7 +80,7 @@ public class ClaudeSessionsHandler implements HttpHandler {
     private void handleSessions(HttpExchange exchange) throws IOException {
         String query = exchange.getRequestURI().getQuery();
         String projectHash = getParam(query, "project");
-        if (projectHash == null || projectHash.isEmpty()) {
+        if (!isSafePathComponent(projectHash)) {
             sendError(exchange, 400, "缺少 project 参数");
             return;
         }
@@ -103,7 +101,7 @@ public class ClaudeSessionsHandler implements HttpHandler {
         String query = exchange.getRequestURI().getQuery();
         String projectHash = getParam(query, "project");
         String sessionId = getParam(query, "id");
-        if (projectHash == null || sessionId == null) {
+        if (!isSafePathComponent(projectHash) || !isSafePathComponent(sessionId)) {
             sendError(exchange, 400, "缺少 project 或 id 参数");
             return;
         }
@@ -122,7 +120,7 @@ public class ClaudeSessionsHandler implements HttpHandler {
         String query = exchange.getRequestURI().getQuery();
         String projectHash = getParam(query, "project");
         String sessionId = getParam(query, "id");
-        if (projectHash == null || sessionId == null) {
+        if (!isSafePathComponent(projectHash) || !isSafePathComponent(sessionId)) {
             sendError(exchange, 400, "缺少 project 或 id 参数");
             return;
         }
@@ -158,7 +156,7 @@ public class ClaudeSessionsHandler implements HttpHandler {
         String query = exchange.getRequestURI().getQuery();
         String projectHash = getParam(query, "project");
         String sessionId = getParam(query, "id");
-        if (projectHash == null || sessionId == null) {
+        if (!isSafePathComponent(projectHash) || !isSafePathComponent(sessionId)) {
             sendError(exchange, 400, "缺少 project 或 id 参数");
             return;
         }
@@ -175,6 +173,16 @@ public class ClaudeSessionsHandler implements HttpHandler {
         exchange.sendResponseHeaders(200, resp.length);
         exchange.getResponseBody().write(resp);
         exchange.close();
+    }
+
+    static boolean isSafePathComponent(String value) {
+        if (value == null || value.isEmpty() || value.length() > 200) return false;
+        if (".".equals(value) || "..".equals(value)) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '-' || c == '_' || c == '.')) return false;
+        }
+        return true;
     }
 
     private void handleHistory(HttpExchange exchange) throws IOException {
