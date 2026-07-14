@@ -181,9 +181,10 @@ public final class TaskState {
         record.addProperty("timestamp", System.currentTimeMillis());
         verifications.add(record);
         lastVerificationAt = System.currentTimeMillis();
-        if (exitCode == 0 && !timedOut && level.rank > bestVerificationLevel.rank) bestVerificationLevel = level;
+        boolean successful = exitCode == 0 && !timedOut;
+        if (successful && level.rank > bestVerificationLevel.rank) bestVerificationLevel = level;
         verifiedAfterLastWrite = hasWrites && lastVerificationAt >= lastWriteAt
-                && exitCode == 0 && !timedOut && level.covers(requiredVerificationLevel);
+                && successful && bestVerificationLevel.covers(requiredVerificationLevel);
         phase = Phase.VERIFY;
         completeStep(1);
         setStepStatus(2, verifiedAfterLastWrite ? "completed" : "blocked");

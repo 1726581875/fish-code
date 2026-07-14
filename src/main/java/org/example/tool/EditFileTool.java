@@ -43,6 +43,13 @@ public class EditFileTool extends Tool {
             details.addProperty("error", "not_a_file");
             return new ToolResult("不是普通文件: " + file.getAbsolutePath(), details);
         }
+        long fileBytes = Files.size(file.toPath());
+        if (fileBytes > ToolConstants.MAX_EDITABLE_FILE_BYTES) {
+            details.addProperty("error", "file_too_large");
+            details.addProperty("fileBytes", fileBytes);
+            return new ToolResult("文件过大，拒绝整文件加载和修改: " + file.getAbsolutePath()
+                    + "（上限 " + ToolConstants.MAX_EDITABLE_FILE_BYTES + " 字节）", details);
+        }
         String oldContent = new String(Files.readAllBytes(Paths.get(file.getAbsolutePath())), StandardCharsets.UTF_8);
         if (!oldContent.contains(oldString)) {
             String preview = oldString.length() > 80 ? oldString.substring(0, 80) + "..." : oldString;

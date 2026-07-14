@@ -24,12 +24,19 @@ public class WriteFileTool extends Tool {
     protected ToolResult doExecuteDetailed(JsonObject args) throws Exception {
         String path = args.get("path").getAsString();
         String newContent = args.get("content").getAsString();
+        byte[] newBytes = newContent.getBytes(StandardCharsets.UTF_8);
 
         File file = ToolUtils.resolveFileSafe(path);
         JsonObject details = new JsonObject();
         details.addProperty("type", "file_write");
         details.addProperty("path", file.getAbsolutePath());
         details.addProperty("risk", "write");
+        if (newBytes.length > ToolConstants.MAX_EDITABLE_FILE_BYTES) {
+            details.addProperty("error", "content_too_large");
+            details.addProperty("contentBytes", newBytes.length);
+            return new ToolResult("写入内容过大，已拒绝: " + newBytes.length
+                    + " 字节（上限 " + ToolConstants.MAX_EDITABLE_FILE_BYTES + " 字节）", details);
+        }
         if (file.exists() && file.isDirectory()) {
             details.addProperty("error", "path_is_directory");
             return new ToolResult("目标路径是目录，无法写入文件: " + file.getAbsolutePath(), details);
@@ -42,6 +49,13 @@ public class WriteFileTool extends Tool {
 
         String diff;
         if (file.exists()) {
+            long fileBytes = Files.size(file.toPath());
+            if (fileBytes > ToolConstants.MAX_EDITABLE_FILE_BYTES) {
+                details.addProperty("error", "file_too_large");
+                details.addProperty("fileBytes", fileBytes);
+                return new ToolResult("现有文件过大，拒绝整文件覆盖: " + file.getAbsolutePath()
+                        + "（上限 " + ToolConstants.MAX_EDITABLE_FILE_BYTES + " 字节）", details);
+            }
             String oldContent = new String(Files.readAllBytes(Paths.get(file.getAbsolutePath())), StandardCharsets.UTF_8);
             if (oldContent.equals(newContent)) {
                 details.addProperty("changed", false);
@@ -59,7 +73,7 @@ public class WriteFileTool extends Tool {
 
         AgentRun run = TerminalStart.getCurrentRun();
         if (run != null) run.getChangeJournal().capture(file);
-        ToolUtils.writeAtomically(Paths.get(file.getAbsolutePath()), newContent.getBytes(StandardCharsets.UTF_8));
+        ToolUtils.writeAtomically(Paths.get(file.getAbsolutePath()), newBytes);
         if (run != null) run.getChangeJournal().recordWritten(file);
         details.addProperty("diff", diff);
         details.addProperty("newChars", newContent.length());

@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.example.core.*;
 import org.example.tool.ToolConstants;
@@ -24,9 +23,10 @@ public class WebStart {
     private static String webUser;
     private static String webPassword;
     private static boolean webAuthEnabled;
+    private static boolean webSecureCookie;
     private static boolean generatedWebPassword;
     private static final Map<String, Long> tokens = new ConcurrentHashMap<>();
-    private static final Map<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
+    private static final Map<String, LoginAttempt> loginAttempts = new ConcurrentHashMap<>();
     private static final Object agentLock = new Object();
     private static final Semaphore chatSlot = new Semaphore(1, true);
     private static final RunRegistry runRegistry = new RunRegistry();
@@ -49,6 +49,7 @@ public class WebStart {
                 ? args[0]
                 : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
         webAuthEnabled = ConfigLoader.getConfigBoolean("web_auth_enabled", "WEB_AUTH_ENABLED", false);
+        webSecureCookie = ConfigLoader.getConfigBoolean("web_secure_cookie", "WEB_SECURE_COOKIE", false);
         webUser = ConfigLoader.getConfigString("web_user", "WEB_USER", "fish");
         webPassword = ConfigLoader.getConfigString("web_password", "WEB_PASSWORD", "");
         bindAddress = ConfigLoader.getConfigString("web_bind_address", "WEB_BIND_ADDRESS", "127.0.0.1");
@@ -100,6 +101,7 @@ public class WebStart {
         cleanupExecutor.scheduleAtFixedRate(() -> {
             long now = System.currentTimeMillis();
             tokens.entrySet().removeIf(e -> now >= e.getValue());
+            loginAttempts.entrySet().removeIf(e -> e.getValue().isExpiredAndIdle(now));
             runRegistry.cleanup(TimeUnit.HOURS.toMillis(24));
         }, 1, 1, TimeUnit.HOURS);
 
@@ -208,6 +210,15 @@ public class WebStart {
         return null;
     }
 
+    private static String authCookie(String value, boolean clear) {
+        StringBuilder cookie = new StringBuilder("fish_token=")
+                .append(value == null ? "" : value)
+                .append("; Path=/; HttpOnly; SameSite=Lax");
+        if (clear) cookie.append("; Max-Age=0");
+        if (webSecureCookie) cookie.append("; Secure");
+        return cookie.toString();
+    }
+
     private static void sendJson(HttpExchange exchange, JsonObject json, int code) throws IOException {
         addCorsHeaders(exchange);
         byte[] resp = json.toString().getBytes(StandardCharsets.UTF_8);
@@ -218,10 +229,17 @@ public class WebStart {
     }
 
     private static boolean writeSse(OutputStream output, JsonObject event) {
+        return writeSse(output, event, false);
+    }
+
+    private static boolean writeSse(OutputStream output, JsonObject event, boolean endStream) {
         try {
             String data = "data: " + GSON.toJson(event) + "\n\n";
-            output.write(data.getBytes(StandardCharsets.UTF_8));
-            output.flush();
+            if (endStream) data += "[END]\n\n";
+            synchronized (output) {
+                output.write(data.getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            }
             return true;
         } catch (IOException ignored) {
             return false;
@@ -312,30 +330,47 @@ public class WebStart {
             }
 
             String remoteAddr = exchange.getRemoteAddress().getAddress().getHostAddress();
-            AtomicInteger attempts = loginAttempts.computeIfAbsent(remoteAddr, k -> new AtomicInteger(0));
-            if (attempts.get() >= 10) {
-                sendJson(exchange, GSON.fromJson("{\"success\":false,\"error\":\"登录尝试过多，请稍后再试\"}", JsonObject.class), 429);
+            LoginAttempt attempts = loginAttempts.computeIfAbsent(remoteAddr, k -> new LoginAttempt());
+            long now = System.currentTimeMillis();
+            long retryAfter = attempts.retryAfterSeconds(now);
+            if (retryAfter > 0) {
+                exchange.getResponseHeaders().set("Retry-After", String.valueOf(retryAfter));
+                JsonObject throttled = new JsonObject();
+                throttled.addProperty("success", false);
+                throttled.addProperty("error", "登录尝试过多，请在 " + retryAfter + " 秒后重试");
+                sendJson(exchange, throttled, 429);
                 return;
             }
 
             String body = readBody(exchange);
-            JsonObject req = GSON.fromJson(body, JsonObject.class);
-            String user = req.has("username") ? req.get("username").getAsString() : "";
-            String pass = req.has("password") ? req.get("password").getAsString() : "";
+            JsonObject req;
+            try {
+                req = GSON.fromJson(body, JsonObject.class);
+            } catch (JsonParseException e) {
+                req = null;
+            }
+            if (req == null) {
+                JsonObject error = new JsonObject();
+                error.addProperty("error", "登录请求格式无效");
+                sendJson(exchange, error, 400);
+                return;
+            }
+            JsonElement userValue = req.get("username");
+            JsonElement passValue = req.get("password");
+            String user = userValue != null && userValue.isJsonPrimitive() ? userValue.getAsString() : "";
+            String pass = passValue != null && passValue.isJsonPrimitive() ? passValue.getAsString() : "";
 
             JsonObject result = new JsonObject();
             if (webUser.equals(user) && webPassword.equals(pass)) {
-                attempts.set(0);
+                loginAttempts.remove(remoteAddr);
                 String token = UUID.randomUUID().toString();
                 long expireMs = (long) ToolConstants.TOKEN_EXPIRE_HOURS * 60 * 60 * 1000;
                 tokens.put(token, System.currentTimeMillis() + expireMs);
                 addCorsHeaders(exchange);
-                exchange.getResponseHeaders().add("Set-Cookie",
-                    "fish_token=" + token + "; Path=/; HttpOnly; SameSite=Lax");
+                exchange.getResponseHeaders().add("Set-Cookie", authCookie(token, false));
                 result.addProperty("success", true);
-                result.addProperty("token", token);
             } else {
-                attempts.incrementAndGet();
+                attempts.recordFailure(now);
                 result.addProperty("success", false);
             }
             sendJson(exchange, result, 200);
@@ -358,6 +393,7 @@ public class WebStart {
             if (token != null) {
                 tokens.remove(token);
             }
+            exchange.getResponseHeaders().add("Set-Cookie", authCookie("", true));
             JsonObject result = new JsonObject();
             result.addProperty("success", true);
             sendJson(exchange, result, 200);
@@ -391,8 +427,10 @@ public class WebStart {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"消息不能为空\"}", JsonObject.class), 400);
                 return;
             }
-            if (message.length() > 50000) {
-                sendJson(exchange, GSON.fromJson("{\"error\":\"消息过长，上限50000字符\"}", JsonObject.class), 400);
+            if (message.length() > ToolConstants.CHAT_MESSAGE_MAX_CHARS) {
+                JsonObject result = new JsonObject();
+                result.addProperty("error", "消息过长，上限" + ToolConstants.CHAT_MESSAGE_MAX_CHARS + "字符");
+                sendJson(exchange, result, 400);
                 return;
             }
             String resolvedApiUrl = null;
@@ -510,14 +548,10 @@ public class WebStart {
 
                     @Override
                     public void onToken(String token) {
-                        try {
-                            JsonObject evt = new JsonObject();
-                            evt.addProperty("type", "token");
-                            evt.addProperty("content", token);
-                            String data = "data: " + GSON.toJson(evt) + "\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) { run.requestStop(); }
+                        JsonObject evt = new JsonObject();
+                        evt.addProperty("type", "token");
+                        evt.addProperty("content", token);
+                        if (!writeSse(os, evt)) run.requestStop();
                     }
 
                     @Override
@@ -525,31 +559,23 @@ public class WebStart {
 
                     @Override
                     public void onToolCall(String fnName, String fnArgs, String status) {
-                        try {
-                            JsonObject evt = new JsonObject();
-                            evt.addProperty("type", "tool_call");
-                            evt.addProperty("name", fnName);
-                            evt.addProperty("args", fnArgs);
-                            evt.addProperty("status", status);
-                            String data = "data: " + GSON.toJson(evt) + "\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) { run.requestStop(); }
+                        JsonObject evt = new JsonObject();
+                        evt.addProperty("type", "tool_call");
+                        evt.addProperty("name", fnName);
+                        evt.addProperty("args", fnArgs);
+                        evt.addProperty("status", status);
+                        if (!writeSse(os, evt)) run.requestStop();
                     }
 
                     @Override
                     public void onToolResult(String fnName, String fnArgs, String status, JsonObject result) {
-                        try {
-                            JsonObject evt = new JsonObject();
-                            evt.addProperty("type", "tool_call");
-                            evt.addProperty("name", fnName);
-                            evt.addProperty("args", fnArgs);
-                            evt.addProperty("status", status);
-                            evt.add("result", result == null ? new JsonObject() : result);
-                            String data = "data: " + GSON.toJson(evt) + "\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) { run.requestStop(); }
+                        JsonObject evt = new JsonObject();
+                        evt.addProperty("type", "tool_call");
+                        evt.addProperty("name", fnName);
+                        evt.addProperty("args", fnArgs);
+                        evt.addProperty("status", status);
+                        evt.add("result", result == null ? new JsonObject() : result);
+                        if (!writeSse(os, evt)) run.requestStop();
                     }
 
                     @Override
@@ -559,54 +585,42 @@ public class WebStart {
 
                     @Override
                     public void onConfirmRequired(String runId, String confirmKey, String fnName, String fnArgs) {
-                        try {
-                            JsonObject evt = new JsonObject();
-                            evt.addProperty("type", "confirm_required");
-                            evt.addProperty("confirmKey", confirmKey);
-                            evt.addProperty("runId", runId);
-                            evt.addProperty("name", fnName);
-                            evt.addProperty("args", fnArgs);
-                            String data = "data: " + GSON.toJson(evt) + "\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) { run.requestStop(); }
+                        JsonObject evt = new JsonObject();
+                        evt.addProperty("type", "confirm_required");
+                        evt.addProperty("confirmKey", confirmKey);
+                        evt.addProperty("runId", runId);
+                        evt.addProperty("name", fnName);
+                        evt.addProperty("args", fnArgs);
+                        if (!writeSse(os, evt)) run.requestStop();
                     }
 
                     @Override
                     public void onComplete(ChatResult result) {
-                        try {
-                            JsonObject doneEvent = new JsonObject();
-                            doneEvent.addProperty("type", "done");
-                            doneEvent.addProperty("reply", result.getReply());
-                            doneEvent.addProperty("durationMs", result.getDurationMs());
-                            doneEvent.addProperty("contextTokens", result.getContextTokens());
-                            doneEvent.addProperty("replyChars", result.getReply() == null ? 0 : result.getReply().length());
-                            doneEvent.addProperty("contextChars", agent.getContextCharCount());
-                            doneEvent.addProperty("mode", agent.getMode().label());
-                            doneEvent.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
-                            JsonObject task = run.getTaskState().toJson();
-                            doneEvent.addProperty("runId", run.getRunId());
-                            doneEvent.addProperty("finalStatus", run.getTaskState().getPhase().name());
-                            doneEvent.add("task", task);
-                            doneEvent.add("modifiedFiles", task.getAsJsonArray("modifiedFiles"));
-                            doneEvent.add("verifications", task.getAsJsonArray("verifications"));
-                            doneEvent.add("remainingRisks", task.getAsJsonArray("remainingRisks"));
-                            String data = "data: " + GSON.toJson(doneEvent) + "\n[END]\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) {}
+                        JsonObject doneEvent = new JsonObject();
+                        doneEvent.addProperty("type", "done");
+                        doneEvent.addProperty("reply", result.getReply());
+                        doneEvent.addProperty("durationMs", result.getDurationMs());
+                        doneEvent.addProperty("contextTokens", result.getContextTokens());
+                        doneEvent.addProperty("replyChars", result.getReply() == null ? 0 : result.getReply().length());
+                        doneEvent.addProperty("contextChars", agent.getContextCharCount());
+                        doneEvent.addProperty("mode", agent.getMode().label());
+                        doneEvent.addProperty("sessionId", agent.getCurrentSessionId() != null ? agent.getCurrentSessionId() : "");
+                        JsonObject task = run.getTaskState().toJson();
+                        doneEvent.addProperty("runId", run.getRunId());
+                        doneEvent.addProperty("finalStatus", run.getTaskState().getPhase().name());
+                        doneEvent.add("task", task);
+                        doneEvent.add("modifiedFiles", task.getAsJsonArray("modifiedFiles"));
+                        doneEvent.add("verifications", task.getAsJsonArray("verifications"));
+                        doneEvent.add("remainingRisks", task.getAsJsonArray("remainingRisks"));
+                        writeSse(os, doneEvent, true);
                     }
 
                     @Override
                     public void onError(String error) {
-                        try {
-                            JsonObject errorEvent = new JsonObject();
-                            errorEvent.addProperty("type", "error");
-                            errorEvent.addProperty("error", error);
-                            String data = "data: " + GSON.toJson(errorEvent) + "\n\n";
-                            os.write(data.getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                        } catch (IOException ignored) {}
+                        JsonObject errorEvent = new JsonObject();
+                        errorEvent.addProperty("type", "error");
+                        errorEvent.addProperty("error", error);
+                        writeSse(os, errorEvent);
                     }
                 };
                 synchronized (agentLock) {
@@ -618,11 +632,7 @@ public class WebStart {
                 errorEvent.addProperty("error", e.getMessage());
                 errorEvent.addProperty("runId", run.getRunId());
                 errorEvent.add("task", run.getTaskState().toJson());
-                String data = "data: " + GSON.toJson(errorEvent) + "\n\n";
-                try {
-                    os.write(data.getBytes(StandardCharsets.UTF_8));
-                    os.flush();
-                } catch (IOException ignored) {}
+                writeSse(os, errorEvent);
             } finally {
                 try { os.close(); } catch (IOException ignored) {}
             }
@@ -1498,5 +1508,42 @@ public class WebStart {
             }
         }
         throw new IOException("找不到 " + name);
+    }
+
+    private static final class LoginAttempt {
+        private int failures;
+        private long lockedUntil;
+        private long lastFailureAt;
+
+        synchronized void recordFailure(long now) {
+            long resetAfter = TimeUnit.SECONDS.toMillis(ToolConstants.LOGIN_LOCKOUT_SECONDS);
+            if ((lockedUntil > 0 && now >= lockedUntil)
+                    || (lastFailureAt > 0 && now - lastFailureAt >= resetAfter)) {
+                failures = 0;
+                lockedUntil = 0;
+            }
+            failures++;
+            lastFailureAt = now;
+            if (failures >= ToolConstants.LOGIN_MAX_FAILURES) {
+                lockedUntil = now + TimeUnit.SECONDS.toMillis(ToolConstants.LOGIN_LOCKOUT_SECONDS);
+            }
+        }
+
+        synchronized long retryAfterSeconds(long now) {
+            if (lockedUntil <= now) {
+                if (lockedUntil > 0) {
+                    failures = 0;
+                    lockedUntil = 0;
+                }
+                return 0;
+            }
+            return Math.max(1, TimeUnit.MILLISECONDS.toSeconds(lockedUntil - now) + 1);
+        }
+
+        synchronized boolean isExpiredAndIdle(long now) {
+            long resetAfter = TimeUnit.SECONDS.toMillis(ToolConstants.LOGIN_LOCKOUT_SECONDS);
+            return (lockedUntil > 0 && lockedUntil <= now)
+                    || (lockedUntil == 0 && lastFailureAt > 0 && now - lastFailureAt >= resetAfter);
+        }
     }
 }

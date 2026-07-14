@@ -14,6 +14,7 @@ public final class DiffUtils {
     private static final int MAX_PREVIEW = ToolConstants.DIFF_MAX_PREVIEW_LINES;
     private static final int CTX = ToolConstants.DIFF_CONTEXT_LINES;
     private static final int MAX_DIFF_LINES = 5000;
+    private static final int MAX_DIFF_CONTENT_CHARS = 1_000_000;
 
     private DiffUtils() {}
 
@@ -25,13 +26,19 @@ public final class DiffUtils {
     public static String buildEditDiff(String filePath, String oldContent, String newContent,
                                        String oldString, String newString) {
         String displayPath = shortenPath(filePath);
+        int oldStartLine = findLineIndex(oldContent, oldString);
+        if (oldStartLine < 0) oldStartLine = 0;
+        int oldChunkLines = countLines(oldString);
+        int newChunkLines = countLines(newString);
+        if (isContentTooLarge(oldContent, newContent)
+                || isDiffTooLarge(oldChunkLines, newChunkLines)) {
+            return buildLargeEditSummary(displayPath, oldStartLine, oldChunkLines, newChunkLines);
+        }
+
         String[] oldLines = oldContent.split("\n", -1);
         String[] oldChunk = oldString.split("\n", -1);
         String[] newChunk = newString.split("\n", -1);
         StringBuilder out = new StringBuilder();
-
-        int oldStartLine = findLineIndex(oldContent, oldString);
-        if (oldStartLine < 0) oldStartLine = 0;
 
         int ctxBefore = Math.min(CTX, oldStartLine);
         int ctxAfter = Math.min(CTX, oldLines.length - (oldStartLine + oldChunk.length));
@@ -84,17 +91,17 @@ public final class DiffUtils {
 
     public static String buildWriteDiff(String filePath, String oldContent, String newContent) {
         String displayPath = shortenPath(filePath);
+        int oldLineCount = countLines(oldContent);
+        int newLineCount = countLines(newContent);
+        if (oldLineCount > MAX_DIFF_LINES || newLineCount > MAX_DIFF_LINES
+                || isDiffTooLarge(oldLineCount, newLineCount)
+                || isContentTooLarge(oldContent, newContent)) {
+            return buildLargeWriteSummary(displayPath, oldLineCount, newLineCount);
+        }
+
         String[] oldLines = oldContent.split("\n", -1);
         String[] newLines = newContent.split("\n", -1);
         StringBuilder out = new StringBuilder();
-
-        if (oldLines.length > MAX_DIFF_LINES || newLines.length > MAX_DIFF_LINES) {
-            out.append("--- a/").append(displayPath).append('\n');
-            out.append("+++ b/").append(displayPath).append('\n');
-            out.append("  (文件较大，跳过差异预览: ").append(oldLines.length)
-                    .append(" -> ").append(newLines.length).append(" 行)\n");
-            return out.toString();
-        }
 
         List<Edit> raw = diffEdits(oldLines, newLines);
         List<Hunk> hunks = groupHunks(raw, CTX);
@@ -124,6 +131,43 @@ public final class DiffUtils {
                 }
             }
         }
+        return out.toString();
+    }
+
+    private static boolean isDiffTooLarge(int oldLines, int newLines) {
+        return (long) oldLines * (long) newLines > ToolConstants.MAX_DIFF_MATRIX_CELLS;
+    }
+
+    private static boolean isContentTooLarge(String oldContent, String newContent) {
+        return (long) oldContent.length() + (long) newContent.length() > MAX_DIFF_CONTENT_CHARS;
+    }
+
+    private static int countLines(String content) {
+        int lines = 1;
+        for (int i = 0; i < content.length(); i++) {
+            if (content.charAt(i) == '\n') lines++;
+        }
+        return lines;
+    }
+
+    private static String buildLargeWriteSummary(String displayPath, int oldLineCount, int newLineCount) {
+        StringBuilder out = new StringBuilder();
+        out.append("--- a/").append(displayPath).append('\n');
+        out.append("+++ b/").append(displayPath).append('\n');
+        out.append("  (文件较大，跳过差异预览: ").append(oldLineCount)
+                .append(" -> ").append(newLineCount).append(" 行)\n");
+        return out.toString();
+    }
+
+    private static String buildLargeEditSummary(String displayPath, int startLine,
+                                                int oldLineCount, int newLineCount) {
+        StringBuilder out = new StringBuilder();
+        out.append("--- a/").append(displayPath).append('\n');
+        out.append("+++ b/").append(displayPath).append('\n');
+        out.append("@@ -").append(startLine + 1).append(',').append(oldLineCount)
+                .append(" +").append(startLine + 1).append(',').append(newLineCount).append(" @@\n");
+        out.append("  (变更块较大，跳过逐行差异预览: ")
+                .append(oldLineCount).append(" -> ").append(newLineCount).append(" 行)\n");
         return out.toString();
     }
 

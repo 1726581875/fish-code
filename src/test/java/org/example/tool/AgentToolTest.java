@@ -93,6 +93,45 @@ public class AgentToolTest extends TestCase {
         assertFalse(ToolUtils.globMatch("App.class", "*.java"));
     }
 
+    public void testLargeDiffFallsBackWithoutQuadraticMatrix() {
+        StringBuilder before = new StringBuilder();
+        StringBuilder after = new StringBuilder();
+        for (int i = 0; i < 1001; i++) {
+            before.append("before-").append(i).append('\n');
+            after.append("after-").append(i).append('\n');
+        }
+        String diff = DiffUtils.buildWriteDiff("large.txt", before.toString(), after.toString());
+        assertTrue(diff.contains("跳过差异预览"));
+    }
+
+    public void testFileToolsRejectOversizedExistingFile() throws Exception {
+        Path workspace = Files.createTempDirectory("fish-code-large-file-");
+        Path largeFile = workspace.resolve("large.txt");
+        try {
+            try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(largeFile.toFile(), "rw")) {
+                file.setLength(ToolConstants.MAX_EDITABLE_FILE_BYTES + 1);
+            }
+            TerminalStart.setCurrentCwd(workspace.toString());
+
+            JsonObject editArgs = new JsonObject();
+            editArgs.addProperty("path", "large.txt");
+            editArgs.addProperty("oldString", "before");
+            editArgs.addProperty("newString", "after");
+            assertEquals("file_too_large",
+                    new EditFileTool().executeDetailed(editArgs).getDetails().get("error").getAsString());
+
+            JsonObject writeArgs = new JsonObject();
+            writeArgs.addProperty("path", "large.txt");
+            writeArgs.addProperty("content", "replacement");
+            assertEquals("file_too_large",
+                    new WriteFileTool().executeDetailed(writeArgs).getDetails().get("error").getAsString());
+        } finally {
+            TerminalStart.clearCurrentCwd();
+            Files.deleteIfExists(largeFile);
+            Files.deleteIfExists(workspace);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     public void testContextCharacterCountIncludesMessagesAndToolCalls() throws Exception {
         TerminalStart agent = new TerminalStart("", "", "test", null);

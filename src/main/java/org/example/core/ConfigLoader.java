@@ -57,7 +57,7 @@ public final class ConfigLoader {
         if (config == null) throw new IllegalArgumentException("配置不能为空");
         Path configPath = getUserConfigPath();
         Path configDir = configPath.getParent();
-        Files.createDirectories(configDir);
+        FileSecurity.ensurePrivateDirectory(configDir);
         Path tempPath = Files.createTempFile(configDir, "config-", ".tmp");
         try {
             byte[] content = PRETTY_GSON.toJson(config).getBytes(StandardCharsets.UTF_8);
@@ -68,6 +68,7 @@ public final class ConfigLoader {
             } catch (AtomicMoveNotSupportedException e) {
                 Files.move(tempPath, configPath, StandardCopyOption.REPLACE_EXISTING);
             }
+            FileSecurity.restrictFile(configPath);
             cachedConfig = config.deepCopy();
         } finally {
             Files.deleteIfExists(tempPath);

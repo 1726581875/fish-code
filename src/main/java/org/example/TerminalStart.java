@@ -320,7 +320,7 @@ public class TerminalStart {
         }
     }
 
-    private void persistMessage(JsonObject msg) {
+    private void persistMessage(JsonObject msg) throws IOException {
         if (currentSessionId != null) {
             sessionManager.appendMessage(currentSessionId, msg);
         }
@@ -466,7 +466,7 @@ public class TerminalStart {
         return result;
     }
 
-    private void prepareUserInput(String userInput) {
+    private void prepareUserInput(String userInput) throws IOException {
         ensureSession(userInput);
         AgentRun run = currentRun.get();
         if (run != null) run.getTaskState().setSessionId(currentSessionId);
@@ -514,7 +514,7 @@ public class TerminalStart {
         return restored;
     }
 
-    private int finalizeOrRequestVerification(AgentRun run) {
+    private int finalizeOrRequestVerification(AgentRun run) throws IOException {
         TaskState state = run.getTaskState();
         if (state.getPhase() == TaskState.Phase.BLOCKED) return 2;
         if (state.hasWrites() && !state.isVerifiedAfterLastWrite()) {
@@ -524,6 +524,7 @@ public class TerminalStart {
                 reminder.addProperty("role", "system");
                 reminder.addProperty("content", "你已经修改了文件，但尚未完成成功验证。请运行相关测试、构建或静态检查；若确实无法验证，请使用 update_task 将任务标记为 BLOCKED 并说明原因。不要声称任务已经完成。");
                 messages.add(reminder);
+                persistMessage(reminder);
                 messagesDirty = true;
                 return 1;
             }
@@ -623,7 +624,7 @@ public class TerminalStart {
         return true;
     }
 
-    private void addRejectionMessage(String callId) {
+    private void addRejectionMessage(String callId) throws IOException {
         JsonObject toolMsg = new JsonObject();
         toolMsg.addProperty("role", "tool");
         toolMsg.addProperty("tool_call_id", callId);
@@ -633,7 +634,7 @@ public class TerminalStart {
         messagesDirty = true;
     }
 
-    private ToolResult executeAndAddToolResult(String fnName, String fnArgs, String callId) {
+    private ToolResult executeAndAddToolResult(String fnName, String fnArgs, String callId) throws IOException {
         AgentRun run = currentRun.get();
         if (run != null) {
             run.getTaskState().markToolActivity(fnName);
@@ -687,7 +688,7 @@ public class TerminalStart {
         return addToolResultMessage(callId, result);
     }
 
-    private ToolResult addToolResultMessage(String callId, ToolResult result) {
+    private ToolResult addToolResultMessage(String callId, ToolResult result) throws IOException {
         JsonObject toolMsg = new JsonObject();
         toolMsg.addProperty("role", "tool");
         toolMsg.addProperty("tool_call_id", callId);
@@ -732,7 +733,7 @@ public class TerminalStart {
 
     private void saveHistory() {
         try {
-            java.nio.file.Files.createDirectories(HISTORY_FILE.getParent());
+            FileSecurity.ensurePrivateDirectory(HISTORY_FILE.getParent());
             StringBuilder sb = new StringBuilder();
             int start = Math.max(0, inputHistory.size() - MAX_HISTORY);
             for (int i = start; i < inputHistory.size(); i++) {
@@ -742,6 +743,7 @@ public class TerminalStart {
                     sb.toString().getBytes(StandardCharsets.UTF_8),
                     java.nio.file.StandardOpenOption.CREATE,
                     java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+            FileSecurity.restrictFile(HISTORY_FILE);
         } catch (IOException ignored) {}
     }
 
@@ -951,9 +953,9 @@ public class TerminalStart {
                     continue;
                 }
                 emptyLineCount = 0;
-                if (!line.startsWith("data: ")) continue;
+                if (!line.startsWith("data:")) continue;
 
-                String data = line.substring(6).trim();
+                String data = line.substring(5).trim();
                 if ("[DONE]".equals(data)) {
                     sawDone = true;
                     break;
@@ -967,8 +969,10 @@ public class TerminalStart {
                     continue;
                 }
 
-                if (!chunk.has("choices") || chunk.get("choices").isJsonNull()) continue;
-                JsonObject choice = chunk.getAsJsonArray("choices").get(0).getAsJsonObject();
+                if (!chunk.has("choices") || !chunk.get("choices").isJsonArray()) continue;
+                JsonArray choices = chunk.getAsJsonArray("choices");
+                if (choices.size() == 0 || !choices.get(0).isJsonObject()) continue;
+                JsonObject choice = choices.get(0).getAsJsonObject();
 
                 if (choice.has("finish_reason") && !choice.get("finish_reason").isJsonNull()) {
                     finishReason = choice.get("finish_reason").getAsString();
@@ -1098,8 +1102,8 @@ public class TerminalStart {
 
         if (!toolCallsMap.isEmpty()) {
             JsonArray tcArray = new JsonArray();
-            for (int i = 0; i < toolCallsMap.size(); i++) {
-                tcArray.add(toolCallsMap.get(i));
+            for (JsonObject toolCall : toolCallsMap.values()) {
+                tcArray.add(toolCall);
             }
             message.add("tool_calls", tcArray);
         }

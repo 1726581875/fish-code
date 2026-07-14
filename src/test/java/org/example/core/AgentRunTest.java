@@ -121,6 +121,66 @@ public class AgentRunTest extends TestCase {
         assertTrue(state.isVerifiedAfterLastWrite());
     }
 
+    public void testWeakerSuccessfulCheckDoesNotDiscardStrongerVerification() {
+        TaskState state = new TaskState("run", "modify source");
+        state.markModified("Sample.java");
+        state.recordVerification("javac Sample.java", 0, false, "ok", "BUILD");
+        assertTrue(state.isVerifiedAfterLastWrite());
+
+        state.recordVerification("git diff --check", 0, false, "ok", "SANITY");
+        assertTrue(state.isVerifiedAfterLastWrite());
+
+        state.recordVerification("mvn test", 1, false, "failed", "TEST");
+        assertFalse(state.isVerifiedAfterLastWrite());
+    }
+
+    public void testAppendMessageFailureIsReportedWithoutIncrementingIndex() throws Exception {
+        Path base = Files.createTempDirectory("fish-session-persistence-");
+        try {
+            SessionManager manager = new SessionManager(base);
+            String sessionId = manager.createSession(base.toString(), "model");
+            Path sessionFile;
+            try (java.util.stream.Stream<Path> paths = Files.walk(base.resolve("sessions"))) {
+                sessionFile = paths.filter(path -> path.getFileName().toString().equals(sessionId + ".jsonl"))
+                        .findFirst().orElseThrow(() -> new AssertionError("session file missing"));
+            }
+            Files.delete(sessionFile);
+
+            JsonObject message = new JsonObject();
+            message.addProperty("role", "user");
+            message.addProperty("content", "must persist");
+            try {
+                manager.appendMessage(sessionId, message);
+                fail("expected append failure");
+            } catch (java.io.IOException expected) {
+                assertTrue(expected.getMessage() != null && !expected.getMessage().isEmpty());
+            }
+            assertEquals(0, manager.getSessionInfo(sessionId).get("messageCount").getAsInt());
+        } finally {
+            deleteTree(base);
+        }
+    }
+
+    public void testSessionStatePathsRejectTraversal() throws Exception {
+        Path base = Files.createTempDirectory("fish-session-path-");
+        Path outside = base.resolve("outside.json");
+        try {
+            Files.write(outside, "keep".getBytes(StandardCharsets.UTF_8));
+            SessionManager manager = new SessionManager(base.resolve("data"));
+
+            manager.deleteSession("../../outside");
+            assertTrue(Files.exists(outside));
+            assertNull(manager.loadTaskState("../../outside"));
+
+            JsonObject task = new JsonObject();
+            task.addProperty("runId", "bad");
+            manager.saveTaskState("../../outside", task);
+            assertEquals("keep", new String(Files.readAllBytes(outside), StandardCharsets.UTF_8));
+        } finally {
+            deleteTree(base);
+        }
+    }
+
     public void testPersistedTaskStateCanResumeWithSameRunId() throws Exception {
         Path workspace = Files.createTempDirectory("fish-run-resume-");
         TaskState state = new TaskState("resume-run", "resume objective");

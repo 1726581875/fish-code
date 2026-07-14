@@ -669,6 +669,10 @@
             cursor: pointer; width: 16px; height: 16px; display: inline-flex;
             align-items: center; justify-content: center;
         }
+        .attachment-budget {
+            display: inline-flex; align-items: center; margin-left: auto;
+            color: var(--text-muted); font-size: 11px; padding: 4px 2px;
+        }
         .queue-bar {
             max-width: 920px; margin: 0 auto 7px; display: none;
             align-items: center; gap: 8px; color: var(--text-secondary);
@@ -762,15 +766,15 @@
     <div class="sidebar-header">
         <span>会话</span>
         <div class="sidebar-header-actions">
-            <button class="sidebar-action" title="新对话" onclick="newSession()" data-lockable><i class="fas fa-plus"></i></button>
-            <button class="sidebar-action" title="刷新" onclick="refreshSidebar()"><i class="fas fa-rotate"></i></button>
+            <button class="sidebar-action" title="新对话" aria-label="新对话" onclick="newSession()" data-lockable><i class="fas fa-plus"></i></button>
+            <button class="sidebar-action" title="刷新" aria-label="刷新侧栏" onclick="refreshSidebar()"><i class="fas fa-rotate"></i></button>
         </div>
     </div>
     <div class="sidebar-section project-files">
         <div class="section-title">
             <i class="fas fa-folder-tree"></i>
             项目文件
-            <button class="sidebar-action" title="刷新文件树" onclick="loadProjectTree(projectTreePath)" style="margin-left:auto;"><i class="fas fa-rotate"></i></button>
+            <button class="sidebar-action" title="刷新文件树" aria-label="刷新文件树" onclick="loadProjectTree(projectTreePath)" style="margin-left:auto;"><i class="fas fa-rotate"></i></button>
         </div>
         <div class="project-tree-path" id="projectTreePath">/</div>
         <div class="sidebar-list" id="projectTreeList">
@@ -801,8 +805,8 @@
         <div class="cwd-wrapper">
             <i class="fas fa-folder-open" style="font-size:11px; color:var(--text-muted);"></i>
             <input type="text" id="cwdInput" class="cwd-input" placeholder="工作目录" title="当前工作目录" />
-            <button class="cwd-apply-btn" title="应用目录" onclick="setCwd()" data-lockable><i class="fas fa-check"></i></button>
-            <button class="cwd-browse-btn" title="选择目录" onclick="openCwdPicker()" data-lockable><i class="fas fa-folder-tree"></i></button>
+            <button class="cwd-apply-btn" title="应用目录" aria-label="应用工作目录" onclick="setCwd()" data-lockable><i class="fas fa-check"></i></button>
+            <button class="cwd-browse-btn" title="选择目录" aria-label="选择工作目录" onclick="openCwdPicker()" data-lockable><i class="fas fa-folder-tree"></i></button>
         </div>
         <div class="top-actions">
             <button class="tab-btn" title="新对话" onclick="newSession()" data-lockable>
@@ -817,7 +821,7 @@
             <button class="tab-btn" id="rollbackTaskBtn" title="回滚本次任务修改" onclick="rollbackCurrentRun()" style="display:none; color:var(--accent-red);">
                 <i class="fas fa-rotate-left" style="margin-right:4px;"></i>回滚
             </button>
-            <button class="action-btn" id="logoutBtn" title="退出登录" onclick="logout()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--accent-red);">
+            <button class="action-btn" id="logoutBtn" title="退出登录" aria-label="退出登录" onclick="logout()" style="font-size:12px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--accent-red);">
                 <i class="fas fa-sign-out-alt"></i>
             </button>
         </div>
@@ -856,9 +860,9 @@
                 <div class="input-wrapper">
                     <textarea id="userInput" rows="1" placeholder="输入代码需求... (Enter 发送, Shift+Enter 换行)"></textarea>
                     <div class="input-actions">
-                        <button class="action-btn attach-btn" title="附加文件内容" onclick="openFilePicker()"><i class="fas fa-paperclip"></i></button>
-                        <button class="action-btn send" title="发送" onclick="sendMessage()"><i class="fas fa-arrow-up"></i></button>
-                        <button class="action-btn stop" title="停止生成" onclick="stopGeneration()"><i class="fas fa-stop"></i></button>
+                        <button class="action-btn attach-btn" title="附加文件内容" aria-label="附加文件内容" onclick="openFilePicker()"><i class="fas fa-paperclip"></i></button>
+                        <button class="action-btn send" title="发送" aria-label="发送消息" onclick="sendMessage()"><i class="fas fa-arrow-up"></i></button>
+                        <button class="action-btn stop" title="停止生成" aria-label="停止生成" onclick="stopGeneration()"><i class="fas fa-stop"></i></button>
                     </div>
                 </div>
                 <input type="file" id="fileInput" multiple style="display:none;">
@@ -942,7 +946,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 
 <script>
-    var token = localStorage.getItem('fish_token') || '';
+    var MAX_OUTGOING_CHARS = 50000;
+    var MAX_ATTACHMENT_CONTENT_CHARS = 45000;
+    var MAX_ATTACHMENT_FILE_BYTES = 45000;
+    var STREAM_RENDER_INTERVAL_MS = 80;
+    localStorage.removeItem('fish_token');
     var messagesContainer = document.getElementById('messagesContainer');
     var userInput = document.getElementById('userInput');
     var sessionSearch = document.getElementById('sessionSearch');
@@ -978,13 +986,11 @@
         opts = opts || {};
         opts.headers = opts.headers || {};
         opts.credentials = 'same-origin';
-        if (token) opts.headers['Authorization'] = 'Bearer ' + token;
         if (opts.body && !(opts.body instanceof FormData) && !opts.headers['Content-Type']) {
             opts.headers['Content-Type'] = 'application/json';
         }
         return fetch(url, opts).then(function (r) {
             if (r.status === 401) {
-                localStorage.removeItem('fish_token');
                 window.location.href = '/';
                 throw new Error('登录已过期');
             }
@@ -1003,9 +1009,9 @@
     }
 
     function logout() {
-        authFetch('/logout', { method: 'POST' }).catch(function () {});
-        localStorage.removeItem('fish_token');
-        window.location.href = '/';
+        authFetch('/logout', { method: 'POST' })
+            .catch(function () {})
+            .finally(function () { window.location.href = '/'; });
     }
 
     function initApp() {
@@ -1018,8 +1024,6 @@
         }).catch(function () {});
         loadModels();
         loadCwd();
-        loadSessions();
-        loadProjectTree('');
     }
 
     function wireEvents() {
@@ -1161,10 +1165,6 @@
             if (logoutBtn) logoutBtn.style.display = d.webAuthEnabled ? 'inline-flex' : 'none';
             if (d.setupMessage) {
                 addAgentLog('需要配置', d.setupMessage, 'error');
-                var welcomeBody = document.querySelector('.welcome-msg .msg-body');
-                if (welcomeBody) {
-                    welcomeBody.innerHTML = renderMarkdown('服务已启动，但还不能聊天：' + d.setupMessage);
-                }
             }
         }).catch(function (err) {
             addAgentLog('模型读取失败', err.message, 'error');
@@ -1196,8 +1196,23 @@
         var status = document.getElementById('modelStatus');
         status.style.color = 'var(--text-muted)';
         status.textContent = selectedModel;
+        updateSetupNotice(data);
         if (document.getElementById('modelConfigOverlay').classList.contains('open')) {
             renderModelConfigList();
+        }
+    }
+
+    function updateSetupNotice(data) {
+        var welcomeBody = document.querySelector('.welcome-msg .msg-body');
+        if (!welcomeBody) return;
+        if (data && data.setupMessage) {
+            welcomeBody.setAttribute('data-setup-notice', 'true');
+            welcomeBody.innerHTML = renderMarkdown('服务已启动，但还不能聊天：' + data.setupMessage);
+            return;
+        }
+        if (welcomeBody.getAttribute('data-setup-notice') === 'true') {
+            welcomeBody.removeAttribute('data-setup-notice');
+            welcomeBody.innerHTML = renderMarkdown('模型已配置，可以开始聊天。');
         }
     }
 
@@ -1229,12 +1244,15 @@
         if (projectTreePath) {
             var up = document.createElement('div');
             up.className = 'project-tree-item';
+            up.tabIndex = 0;
+            up.setAttribute('role', 'button');
             up.innerHTML = '<i class="fas fa-arrow-up"></i><span class="project-tree-name">返回上级</span>';
             up.onclick = function () {
                 var parts = projectTreePath.split('/').filter(Boolean);
                 parts.pop();
                 loadProjectTree(parts.join('/'));
             };
+            up.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); up.click(); } };
             list.appendChild(up);
         }
         if (!items.length) {
@@ -1247,6 +1265,8 @@
         items.forEach(function (item) {
             var row = document.createElement('div');
             row.className = 'project-tree-item ' + (item.type === 'file' ? 'file' : 'dir');
+            row.tabIndex = 0;
+            row.setAttribute('role', 'button');
             row.title = item.path || item.name;
             row.innerHTML = '<i class="fas ' + (item.type === 'file' ? 'fa-file-lines' : 'fa-folder') + '"></i><span class="project-tree-name"></span>';
             row.querySelector('span').textContent = item.name;
@@ -1261,6 +1281,7 @@
                     userInput.focus();
                 }
             };
+            row.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); } };
             list.appendChild(row);
         });
     }
@@ -1304,10 +1325,14 @@
         var row = document.createElement('div');
         row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
         row.tabIndex = 0;
+        row.setAttribute('role', 'button');
         row.title = (s.title || s.id) + (s.cwd ? '\n' + s.cwd : '');
         row.onclick = function () { resumeSession(s.id, s.title || '新会话', s.cwd || ''); };
         row.onkeydown = function (e) {
-            if (e.key === 'Enter') resumeSession(s.id, s.title || '新会话', s.cwd || '');
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                resumeSession(s.id, s.title || '新会话', s.cwd || '');
+            }
         };
 
         var title = document.createElement('div');
@@ -1338,6 +1363,7 @@
         var btn = document.createElement('button');
         btn.className = 'session-action-btn' + (extraClass ? ' ' + extraClass : '');
         btn.title = title;
+        btn.setAttribute('aria-label', title);
         btn.innerHTML = '<i class="fas ' + icon + '"></i>';
         btn.onclick = handler;
         return btn;
@@ -1481,6 +1507,11 @@
         var attachments = pendingAttachments.slice();
         var text = composeOutgoingMessage(visibleText, attachments);
         if (!text) return null;
+        if (text.length > MAX_OUTGOING_CHARS) {
+            addAgentLog('消息过长', '当前 ' + formatCharCount(text.length) + ' 字符，上限 ' +
+                formatCharCount(MAX_OUTGOING_CHARS) + ' 字符；请减少正文或附件', 'error');
+            return null;
+        }
         var visibleMessage = visibleText || '请阅读这些附件内容。';
         if (attachments.length) {
             visibleMessage += '\n\n附件：' + attachments.map(function (file) { return file.name; }).join('、');
@@ -1606,11 +1637,11 @@
                                 } else if (evt.type === 'done') {
                                     terminalEventReceived = true;
                                     if (!gotFirstToken && evt.reply) {
-                                        contentDiv.setAttribute('data-raw', evt.reply);
+                                        setRawContent(contentDiv, evt.reply);
                                         beginActiveResponse(msgDiv);
                                     }
                                     if (contentDiv) {
-                                        flushStreamRender(contentDiv);
+                                        flushStreamRender(contentDiv, true);
                                         addReplyMeta(msgDiv, evt.durationMs, evt.mode, evt.replyChars);
                                     }
                                     currentRunId = evt.runId || currentRunId;
@@ -1654,9 +1685,9 @@
             .catch(function (err) {
                 beginActiveResponse(msgDiv);
                 if (stopRequestedByUser || err.name === 'AbortError') {
-                    if (!(contentDiv.getAttribute('data-raw') || '').trim()) {
-                        contentDiv.setAttribute('data-raw', '已停止当前回复。');
-                        flushStreamRender(contentDiv);
+                    if (!getRawContent(contentDiv).trim()) {
+                        setRawContent(contentDiv, '已停止当前回复。');
+                        flushStreamRender(contentDiv, true);
                     } else {
                         appendResponseNote(contentDiv, '已停止生成');
                     }
@@ -1718,17 +1749,32 @@
             return;
         }
         Promise.all(files.map(readTextAttachment)).then(function (items) {
+            var used = attachmentContentChars();
             items.forEach(function (item) {
-                if (item) pendingAttachments.push(item);
+                if (!item) return;
+                if (used + item.content.length > MAX_ATTACHMENT_CONTENT_CHARS) {
+                    addAgentLog('附件总量过大', '附件内容合计最多 ' +
+                        formatCharCount(MAX_ATTACHMENT_CONTENT_CHARS) + ' 字符', 'error');
+                    return;
+                }
+                pendingAttachments.push(item);
+                used += item.content.length;
             });
             renderAttachmentStrip();
         });
     }
 
+    function attachmentContentChars() {
+        return pendingAttachments.reduce(function (total, file) {
+            return total + String(file.content || '').length;
+        }, 0);
+    }
+
     function readTextAttachment(file) {
         return new Promise(function (resolve) {
-            if (file.size > 200000) {
-                addAgentLog('附件过大', file.name + ' 超过 200KB', 'error');
+            if (file.size > MAX_ATTACHMENT_FILE_BYTES) {
+                addAgentLog('附件过大', file.name + ' 超过 ' +
+                    Math.round(MAX_ATTACHMENT_FILE_BYTES / 1000) + 'KB', 'error');
                 resolve(null);
                 return;
             }
@@ -1762,7 +1808,7 @@
         pendingAttachments.forEach(function (file, index) {
             var chip = document.createElement('span');
             chip.className = 'attachment-chip';
-            chip.innerHTML = '<i class="fas fa-file-lines"></i><span></span><button title="移除"><i class="fas fa-times"></i></button>';
+            chip.innerHTML = '<i class="fas fa-file-lines"></i><span></span><button title="移除" aria-label="移除附件"><i class="fas fa-times"></i></button>';
             chip.querySelector('span').textContent = file.name;
             chip.querySelector('button').onclick = function () {
                 pendingAttachments.splice(index, 1);
@@ -1770,6 +1816,13 @@
             };
             attachmentStrip.appendChild(chip);
         });
+        if (pendingAttachments.length) {
+            var budget = document.createElement('span');
+            budget.className = 'attachment-budget';
+            budget.textContent = formatCharCount(attachmentContentChars()) + ' / ' +
+                formatCharCount(MAX_ATTACHMENT_CONTENT_CHARS) + ' 字符';
+            attachmentStrip.appendChild(budget);
+        }
     }
 
     function clearAttachments() {
@@ -1821,7 +1874,7 @@
         if (!msgDiv) return;
         msgDiv.classList.remove('pending', 'streaming');
         var content = msgDiv.querySelector('.response-content');
-        if ((content.getAttribute('data-raw') || '').trim() || content.children.length) {
+        if (getRawContent(content).trim() || content.children.length) {
             msgDiv.classList.add('has-content');
         } else {
             var icon = msgDiv.querySelector('.ai-status-icon');
@@ -1867,7 +1920,7 @@
         var countEl = msgDiv.querySelector('.response-char-count');
         if (!countEl) return;
         var content = msgDiv.querySelector('.response-content');
-        var count = typeof explicitCount === 'number' ? explicitCount : ((content && content.getAttribute('data-raw')) || '').length;
+        var count = typeof explicitCount === 'number' ? explicitCount : getRawContent(content).length;
         countEl.textContent = '本次回复 ' + formatCharCount(count) + ' 字符';
     }
 
@@ -1889,23 +1942,35 @@
         contentDiv.appendChild(note);
     }
 
-    function appendStreamToken(contentDiv, text) {
-        var raw = contentDiv.getAttribute('data-raw') || '';
-        raw += text || '';
-        contentDiv.setAttribute('data-raw', raw);
-        if (contentDiv.__renderQueued) return;
-        contentDiv.__renderQueued = true;
-        window.requestAnimationFrame(function () {
-            contentDiv.__renderQueued = false;
-            flushStreamRender(contentDiv);
-        });
+    function getRawContent(contentDiv) {
+        if (!contentDiv) return '';
+        return typeof contentDiv.__rawText === 'string' ? contentDiv.__rawText : '';
     }
 
-    function flushStreamRender(contentDiv) {
-        var raw = contentDiv.getAttribute('data-raw') || contentDiv.textContent || '';
+    function setRawContent(contentDiv, text) {
+        if (contentDiv) contentDiv.__rawText = String(text || '');
+    }
+
+    function appendStreamToken(contentDiv, text) {
+        setRawContent(contentDiv, getRawContent(contentDiv) + (text || ''));
+        if (contentDiv.__renderTimer) return;
+        contentDiv.__renderTimer = window.setTimeout(function () {
+            contentDiv.__renderTimer = null;
+            flushStreamRender(contentDiv, false);
+        }, STREAM_RENDER_INTERVAL_MS);
+    }
+
+    function flushStreamRender(contentDiv, finalRender) {
+        if (!contentDiv) return;
+        if (finalRender && contentDiv.__renderTimer) {
+            window.clearTimeout(contentDiv.__renderTimer);
+            contentDiv.__renderTimer = null;
+        }
+        var raw = getRawContent(contentDiv);
         contentDiv.innerHTML = renderMarkdown(raw);
-        highlightCode(contentDiv);
+        if (finalRender) highlightCode(contentDiv);
         updateResponseCharCount(contentDiv.closest('.agent-response'));
+        scrollToBottom(false);
     }
 
     function appendError(contentDiv, text) {
@@ -2012,6 +2077,7 @@
         var btn = document.createElement('button');
         btn.className = 'tool-mini-btn';
         btn.title = title;
+        btn.setAttribute('aria-label', title);
         btn.innerHTML = '<i class="fas ' + icon + '"></i>';
         btn.onclick = handler;
         return btn;
@@ -2122,7 +2188,21 @@
         panel.appendChild(head);
         var steps = document.createElement('div');
         steps.className = 'task-steps';
-        (task.steps || []).forEach(function (step) {
+        var taskSteps = task.steps || [];
+        var defaultWorkflow = taskSteps.length === 3 &&
+            taskSteps[0].title === '理解需求并定位相关代码' &&
+            taskSteps[1].title === '制定并执行修改' &&
+            taskSteps[2].title === '运行验证并检查结果';
+        if (defaultWorkflow && !task.hasWrites) {
+            var simpleStatus = task.phase === 'COMPLETE' ? 'completed' :
+                (task.phase === 'BLOCKED' || task.phase === 'CANCELLED' || task.phase === 'INTERRUPTED'
+                    ? 'blocked' : (taskSteps[0].status || 'in_progress'));
+            taskSteps = [{
+                title: task.phase === 'COMPLETE' ? '完成分析与回复' : '分析需求并生成回复',
+                status: simpleStatus
+            }];
+        }
+        taskSteps.forEach(function (step) {
             var item = document.createElement('span');
             item.className = 'task-step ' + (step.status || 'pending');
             item.textContent = step.title || '';
@@ -2725,7 +2805,7 @@
     <div class="cwd-picker" onclick="event.stopPropagation()">
         <div class="cwd-picker-header">
             <span><i class="fas fa-folder-open" style="margin-right:6px;"></i>选择工作目录</span>
-            <button class="action-btn" onclick="closeCwdPicker()" style="font-size:14px;"><i class="fas fa-times"></i></button>
+            <button class="action-btn" aria-label="关闭目录选择器" onclick="closeCwdPicker()" style="font-size:14px;"><i class="fas fa-times"></i></button>
         </div>
         <div class="cwd-picker-shortcuts" id="cwdPickerShortcuts"></div>
         <div class="cwd-picker-breadcrumb" id="cwdPickerBreadcrumb"></div>

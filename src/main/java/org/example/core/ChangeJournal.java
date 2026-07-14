@@ -33,7 +33,9 @@ public final class ChangeJournal {
         String path = canonical.getPath();
         if (entries.containsKey(path)) return;
 
-        Files.createDirectories(journalDir);
+        FileSecurity.ensurePrivateSubdirectory(
+                Paths.get(System.getProperty("user.home"), ".fish-code"),
+                Paths.get("runs", runId));
         boolean existed = canonical.exists();
         String snapshot = existed ? digest(path) + ".snapshot" : "";
         if (existed) {

@@ -182,6 +182,42 @@ public class AgentExecutionTest extends TestCase {
         }
     }
 
+    public void testStreamingAcceptsUsageChunkAndDataWithoutSpace() throws Exception {
+        Path home = Files.createTempDirectory("fish-agent-stream-usage-home-");
+        Path workspace = Files.createTempDirectory("fish-agent-stream-usage-workspace-");
+        String originalHome = System.getProperty("user.home");
+        HttpServer server = null;
+        try {
+            System.setProperty("user.home", home.toString());
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/chat", exchange -> {
+                while (exchange.getRequestBody().read() != -1) {}
+                String stream = "data:{\"choices\":[],\"usage\":{\"total_tokens\":1}}\n\n"
+                        + "data:{\"choices\":[{\"delta\":{\"content\":\"compatible\"},\"finish_reason\":\"stop\"}]}\n\n"
+                        + "data:[DONE]\n\n";
+                byte[] bytes = stream.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+            });
+            server.start();
+            TerminalStart agent = new TerminalStart(url(server), "key", "model", new SessionManager());
+            agent.setWorkspaceDir(workspace.toString());
+            AgentRun run = new AgentRun("stream-usage-run", "stream", "model",
+                    agent.getApiUrl(), "key", workspace.toString());
+
+            ChatResult result = agent.chatStream("stream", new StreamCallback() {}, run);
+            assertEquals("compatible", result.getReply());
+            assertEquals(TaskState.Phase.COMPLETE, run.getTaskState().getPhase());
+        } finally {
+            if (server != null) server.stop(0);
+            System.setProperty("user.home", originalHome);
+            deleteTree(workspace);
+            deleteTree(home);
+        }
+    }
+
     public void testDuplicateToolCallIsNotRepeatedAndRoundLimitBlocks() throws Exception {
         Path home = Files.createTempDirectory("fish-agent-limit-home-");
         Path workspace = Files.createTempDirectory("fish-agent-limit-workspace-");

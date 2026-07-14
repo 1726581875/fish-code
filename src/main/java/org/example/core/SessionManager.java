@@ -16,15 +16,22 @@ public class SessionManager {
 
     private static final Gson GSON = new Gson();
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy/MM/dd");
-    private static final Path BASE_DIR = Paths.get(System.getProperty("user.home"), ".fish-code");
-    private static final Path SESSIONS_DIR = BASE_DIR.resolve("sessions");
-    private static final Path INDEX_FILE = BASE_DIR.resolve("sessions-index.json");
-    private static final Path TASKS_DIR = BASE_DIR.resolve("task-states");
-
     private static final AtomicInteger COUNTER = new AtomicInteger((int) (System.currentTimeMillis() & 0xFFFF));
     private final List<JsonObject> index = new CopyOnWriteArrayList<>();
+    private final Path baseDir;
+    private final Path sessionsDir;
+    private final Path indexFile;
+    private final Path tasksDir;
 
     public SessionManager() {
+        this(Paths.get(System.getProperty("user.home"), ".fish-code"));
+    }
+
+    SessionManager(Path baseDir) {
+        this.baseDir = baseDir.toAbsolutePath().normalize();
+        this.sessionsDir = this.baseDir.resolve("sessions");
+        this.indexFile = this.baseDir.resolve("sessions-index.json");
+        this.tasksDir = this.baseDir.resolve("task-states");
         ensureDirs();
         loadIndex();
     }
@@ -35,10 +42,12 @@ public class SessionManager {
         String datePath = today.format(DATE_FMT);
         String fileName = id + ".jsonl";
 
-        Path sessionFile = SESSIONS_DIR.resolve(datePath).resolve(fileName);
+        Path sessionFile;
         try {
-            Files.createDirectories(sessionFile.getParent());
+            Path sessionDirectory = FileSecurity.ensurePrivateSubdirectory(sessionsDir, Paths.get(datePath));
+            sessionFile = sessionDirectory.resolve(fileName);
             Files.createFile(sessionFile);
+            FileSecurity.restrictFile(sessionFile);
         } catch (IOException e) {
             throw new RuntimeException("创建会话文件失败: " + e.getMessage(), e);
         }
@@ -54,7 +63,13 @@ public class SessionManager {
         entry.addProperty("file", datePath + "/" + fileName);
 
         index.add(entry);
-        saveIndex();
+        try {
+            saveIndexOrThrow();
+        } catch (IOException e) {
+            index.remove(entry);
+            try { Files.deleteIfExists(sessionFile); } catch (IOException ignored) {}
+            throw new RuntimeException("保存会话索引失败: " + e.getMessage(), e);
+        }
         return id;
     }
 
@@ -71,9 +86,9 @@ public class SessionManager {
         }
     }
 
-    public synchronized void appendMessage(String sessionId, JsonObject message) {
+    public synchronized void appendMessage(String sessionId, JsonObject message) throws IOException {
         Path sessionFile = resolveSessionFile(sessionId);
-        if (sessionFile == null) return;
+        if (sessionFile == null) throw new IOException("会话不存在: " + sessionId);
 
         JsonObject wrapped = new JsonObject();
         wrapped.addProperty("timestamp", System.currentTimeMillis());
@@ -91,13 +106,9 @@ public class SessionManager {
             wrapped.addProperty("toolCallId", message.get("tool_call_id").getAsString());
         }
 
-        try {
-            Files.write(sessionFile,
-                    (GSON.toJson(wrapped) + "\n").getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            System.err.println("追加消息失败: " + e.getMessage());
-        }
+        Files.write(sessionFile,
+                (GSON.toJson(wrapped) + "\n").getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.APPEND);
 
         for (int i = 0; i < index.size(); i++) {
             JsonObject entry = index.get(i);
@@ -109,15 +120,15 @@ public class SessionManager {
                 break;
             }
         }
-        saveIndex();
+        saveIndexOrThrow();
     }
 
     public synchronized void saveTaskState(String sessionId, JsonObject taskState) {
-        if (sessionId == null || sessionId.trim().isEmpty() || taskState == null) return;
+        Path target = resolveTaskFile(sessionId);
+        if (target == null || taskState == null) return;
         try {
-            Files.createDirectories(TASKS_DIR);
-            Path target = TASKS_DIR.resolve(sessionId + ".json");
-            Path temp = Files.createTempFile(TASKS_DIR, sessionId + "-", ".tmp");
+            FileSecurity.ensurePrivateDirectory(tasksDir);
+            Path temp = Files.createTempFile(tasksDir, sessionId + "-", ".tmp");
             try {
                 Files.write(temp, GSON.toJson(taskState).getBytes(StandardCharsets.UTF_8),
                         StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -126,6 +137,7 @@ public class SessionManager {
                 } catch (AtomicMoveNotSupportedException e) {
                     Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
                 }
+                FileSecurity.restrictFile(target);
             } finally {
                 Files.deleteIfExists(temp);
             }
@@ -135,8 +147,8 @@ public class SessionManager {
     }
 
     public JsonObject loadTaskState(String sessionId) {
-        if (sessionId == null || sessionId.trim().isEmpty()) return null;
-        Path target = TASKS_DIR.resolve(sessionId + ".json");
+        Path target = resolveTaskFile(sessionId);
+        if (target == null) return null;
         if (!Files.exists(target)) return null;
         try {
             return GSON.fromJson(new String(Files.readAllBytes(target), StandardCharsets.UTF_8), JsonObject.class);
@@ -204,13 +216,17 @@ public class SessionManager {
     }
 
     public synchronized void deleteSession(String sessionId) {
+        if (!isValidSessionId(sessionId)) return;
         Path sessionFile = resolveSessionFile(sessionId);
         if (sessionFile != null) {
             try {
                 Files.deleteIfExists(sessionFile);
             } catch (IOException ignored) {}
         }
-        try { Files.deleteIfExists(TASKS_DIR.resolve(sessionId + ".json")); } catch (IOException ignored) {}
+        Path taskFile = resolveTaskFile(sessionId);
+        if (taskFile != null) {
+            try { Files.deleteIfExists(taskFile); } catch (IOException ignored) {}
+        }
         for (int i = 0; i < index.size(); i++) {
             if (index.get(i).get("id").getAsString().equals(sessionId)) {
                 index.remove(i);
@@ -228,12 +244,29 @@ public class SessionManager {
     }
 
     private Path resolveSessionFile(String sessionId) {
+        if (!isValidSessionId(sessionId)) return null;
         for (JsonObject entry : index) {
             if (entry.get("id").getAsString().equals(sessionId)) {
-                return SESSIONS_DIR.resolve(entry.get("file").getAsString());
+                Path resolved = sessionsDir.resolve(entry.get("file").getAsString()).normalize();
+                return resolved.startsWith(sessionsDir) ? resolved : null;
             }
         }
         return null;
+    }
+
+    private Path resolveTaskFile(String sessionId) {
+        if (!isValidSessionId(sessionId)) return null;
+        Path resolved = tasksDir.resolve(sessionId + ".json").normalize();
+        return resolved.startsWith(tasksDir) ? resolved : null;
+    }
+
+    private static boolean isValidSessionId(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty() || sessionId.length() > 100) return false;
+        for (int i = 0; i < sessionId.length(); i++) {
+            char value = sessionId.charAt(i);
+            if (!(Character.isLetterOrDigit(value) || value == '-' || value == '_')) return false;
+        }
+        return true;
     }
 
     private static String generateId() {
@@ -244,7 +277,10 @@ public class SessionManager {
 
     private void ensureDirs() {
         try {
-            Files.createDirectories(SESSIONS_DIR);
+            FileSecurity.ensurePrivateDirectory(baseDir);
+            FileSecurity.ensurePrivateDirectory(sessionsDir);
+            FileSecurity.ensurePrivateDirectory(tasksDir);
+            FileSecurity.secureTree(baseDir);
         } catch (IOException e) {
             System.err.println("创建会话目录失败: " + e.getMessage());
         }
@@ -252,11 +288,11 @@ public class SessionManager {
 
     private void loadIndex() {
         index.clear();
-        if (!Files.exists(INDEX_FILE)) {
+        if (!Files.exists(indexFile)) {
             return;
         }
         try {
-            byte[] bytes = Files.readAllBytes(INDEX_FILE);
+            byte[] bytes = Files.readAllBytes(indexFile);
             String content = new String(bytes, StandardCharsets.UTF_8).trim();
             if (content.isEmpty()) return;
             JsonArray arr = GSON.fromJson(content, JsonArray.class);
@@ -270,20 +306,29 @@ public class SessionManager {
 
     private void saveIndex() {
         try {
-            Files.createDirectories(INDEX_FILE.getParent());
-            JsonArray arr = new JsonArray();
-            for (JsonObject entry : index) {
-                arr.add(entry);
-            }
-            Path tmp = INDEX_FILE.resolveSibling(INDEX_FILE.getFileName() + ".tmp");
-            Files.write(tmp,
-                    GSON.toJson(arr).getBytes(StandardCharsets.UTF_8),
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            Files.move(tmp, INDEX_FILE,
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            saveIndexOrThrow();
         } catch (IOException e) {
             System.err.println("保存会话索引失败: " + e.getMessage());
+        }
+    }
+
+    private void saveIndexOrThrow() throws IOException {
+        FileSecurity.ensurePrivateDirectory(indexFile.getParent());
+        JsonArray arr = new JsonArray();
+        for (JsonObject entry : index) arr.add(entry);
+        Path tmp = indexFile.resolveSibling(indexFile.getFileName() + ".tmp");
+        try {
+            Files.write(tmp, GSON.toJson(arr).getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                Files.move(tmp, indexFile, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, indexFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+            FileSecurity.restrictFile(indexFile);
+        } finally {
+            Files.deleteIfExists(tmp);
         }
     }
 
