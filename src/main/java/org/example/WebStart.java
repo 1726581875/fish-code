@@ -45,6 +45,7 @@ public class WebStart {
                 "https://api.deepseek.com/chat/completions");
         String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
         String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String reasoningEffort = ConfigLoader.getConfigString("cur_reasoning_effort", "FISH_REASONING_EFFORT", "");
         String workspaceDir = args.length > 0
                 ? args[0]
                 : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
@@ -65,6 +66,7 @@ public class WebStart {
 
         sessionManager = new SessionManager();
         agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
+        agent.setReasoningEffort(reasoningEffort);
         agent.setMode(AgentMode.CONFIRM);
         try {
             agent.setWorkspaceDir(workspaceDir);
@@ -180,12 +182,41 @@ public class WebStart {
     }
 
     private static File requireOrAuthorizeWorkspace(File candidate) throws IOException {
+        return requireOrAuthorizeWorkspace(candidate, true);
+    }
+
+    private static File requireOrAuthorizeWorkspace(File candidate, boolean explicitAuthorization) throws IOException {
         try {
             return workspacePolicy.requireAllowed(candidate);
         } catch (IOException denied) {
             if (!localOnlyBind) throw denied;
+            if (!explicitAuthorization) {
+                File canonical = candidate.getCanonicalFile();
+                // Browsing can see local folders, but switching workspaces must be an explicit user grant.
+                throw new AuthorizationRequiredException("目录需要授权后才能作为工作区: " + canonical.getPath(), canonical.getPath());
+            }
             return workspacePolicy.authorizeExplicit(candidate);
         }
+    }
+
+    private static class AuthorizationRequiredException extends IOException {
+        private final String path;
+
+        AuthorizationRequiredException(String message, String path) {
+            super(message);
+            this.path = path;
+        }
+    }
+
+    private static String normalizeReasoningEffort(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        // Empty means "provider default"; do not send reasoning_effort to APIs that may not support it.
+        if (normalized.isEmpty() || "default".equals(normalized)) return "";
+        if ("low".equals(normalized) || "medium".equals(normalized) || "high".equals(normalized)) {
+            return normalized;
+        }
+        throw new IllegalArgumentException("推理强度只能是默认、低、中、高");
     }
 
     private static String extractToken(HttpExchange exchange) {
@@ -435,7 +466,9 @@ public class WebStart {
             }
             String resolvedApiUrl = null;
             String resolvedApiKey = null;
+            String resolvedReasoningEffort = null;
             if (reqModel != null) {
+                // A selected model may carry its own endpoint, key, and reasoning default.
                 JsonObject config = ConfigLoader.loadConfig();
                 if (config.has("models")) {
                     for (JsonElement el : config.getAsJsonArray("models")) {
@@ -443,6 +476,8 @@ public class WebStart {
                         if (reqModel.equals(m.get("value").getAsString())) {
                             resolvedApiUrl = m.has("api_url") ? m.get("api_url").getAsString() : null;
                             resolvedApiKey = m.has("api_key") ? m.get("api_key").getAsString() : null;
+                            resolvedReasoningEffort = m.has("reasoning_effort") && !m.get("reasoning_effort").isJsonNull()
+                                    ? m.get("reasoning_effort").getAsString() : "";
                             break;
                         }
                     }
@@ -475,6 +510,18 @@ public class WebStart {
             String effectiveModel = reqModel != null ? reqModel : agent.getModel();
             String effectiveApiUrl = resolvedApiUrl != null ? resolvedApiUrl : agent.getApiUrl();
             String effectiveApiKey = resolvedApiKey != null && !resolvedApiKey.isEmpty() ? resolvedApiKey : agent.getApiKey();
+            String effectiveReasoningEffort = resolvedReasoningEffort != null ? resolvedReasoningEffort : agent.getReasoningEffort();
+            if (req.has("reasoningEffort")) {
+                try {
+                    // The toolbar value wins over the saved model default for this run.
+                    effectiveReasoningEffort = normalizeReasoningEffort(req.get("reasoningEffort").getAsString());
+                } catch (IllegalArgumentException e) {
+                    JsonObject result = new JsonObject();
+                    result.addProperty("error", e.getMessage());
+                    sendJson(exchange, result, 400);
+                    return;
+                }
+            }
             if (!chatSlot.tryAcquire()) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"已有任务正在执行，请等待当前任务完成或先取消\"}", JsonObject.class), 409);
                 return;
@@ -488,7 +535,7 @@ public class WebStart {
                             ? sessionManager.loadTaskState(resumeSessionId) : null;
                     try {
                         run = runRegistry.resume(resumeRunId, message, effectiveModel, effectiveApiUrl,
-                                effectiveApiKey, effectiveCwd, persisted);
+                                effectiveApiKey, effectiveReasoningEffort, effectiveCwd, persisted);
                     } catch (IOException e) {
                         JsonObject error = new JsonObject();
                         error.addProperty("error", "无法恢复任务: " + e.getMessage());
@@ -496,7 +543,8 @@ public class WebStart {
                         return;
                     }
                 } else {
-                    run = runRegistry.create(message, effectiveModel, effectiveApiUrl, effectiveApiKey, effectiveCwd);
+                    run = runRegistry.create(message, effectiveModel, effectiveApiUrl, effectiveApiKey,
+                            effectiveReasoningEffort, effectiveCwd);
                 }
                 if (stream) {
                     handleStream(exchange, message, run);
@@ -827,6 +875,11 @@ public class WebStart {
                         case "selectModel":
                             updated = ModelConfigManager.selectModel(current, requestString(request, "value"));
                             break;
+                        case "setReasoningEffort":
+                            // Toolbar changes are saved back to the current model.
+                            updated = ModelConfigManager.setReasoningEffort(current, requestString(request, "value"),
+                                    requestString(request, "reasoningEffort"));
+                            break;
                         case "deleteModel":
                             updated = ModelConfigManager.deleteModel(current, requestString(request, "value"));
                             break;
@@ -857,6 +910,9 @@ public class WebStart {
             if (config.has("cur_model")) agent.setModel(config.get("cur_model").getAsString());
             if (config.has("cur_api_url")) agent.setApiUrl(config.get("cur_api_url").getAsString());
             if (config.has("cur_api_key")) agent.setApiKey(config.get("cur_api_key").getAsString());
+            // Keep the long-lived agent aligned with the persisted current model.
+            agent.setReasoningEffort(config.has("cur_reasoning_effort")
+                    ? config.get("cur_reasoning_effort").getAsString() : "");
         }
 
         private static JsonObject buildConfigResponse(JsonObject config) {
@@ -887,8 +943,11 @@ public class WebStart {
             }
             String currentModel = config.has("cur_model") ? config.get("cur_model").getAsString() : agent.getModel();
             String currentApiUrl = config.has("cur_api_url") ? config.get("cur_api_url").getAsString() : agent.getApiUrl();
+            String currentReasoningEffort = config.has("cur_reasoning_effort")
+                    ? config.get("cur_reasoning_effort").getAsString() : agent.getReasoningEffort();
             result.addProperty("model", currentModel);
             result.addProperty("apiUrl", currentApiUrl);
+            result.addProperty("reasoningEffort", currentReasoningEffort == null ? "" : currentReasoningEffort);
             result.addProperty("workspaceDir", agent.getWorkspaceDir());
             result.addProperty("webAuthEnabled", webAuthEnabled);
             boolean apiKeyConfigured = (agent.getApiKey() != null && !agent.getApiKey().isEmpty()) || anyModelApiKeyConfigured;
@@ -927,6 +986,7 @@ public class WebStart {
                 String body = readBody(exchange);
                 JsonObject req = GSON.fromJson(body, JsonObject.class);
                 String newCwd = req.has("cwd") ? req.get("cwd").getAsString() : "";
+                boolean authorize = req.has("authorize") && req.get("authorize").getAsBoolean();
                 if (newCwd.isEmpty()) {
                     sendJson(exchange, GSON.fromJson("{\"error\":\"cwd不能为空\"}", JsonObject.class), 400);
                     return;
@@ -936,7 +996,14 @@ public class WebStart {
                 }
                 java.io.File dir;
                 try {
-                    dir = requireOrAuthorizeWorkspace(new java.io.File(newCwd));
+                    dir = requireOrAuthorizeWorkspace(new java.io.File(newCwd), authorize);
+                } catch (AuthorizationRequiredException e) {
+                    JsonObject error = new JsonObject();
+                    error.addProperty("error", e.getMessage());
+                    error.addProperty("needsAuthorization", true);
+                    error.addProperty("path", e.path);
+                    sendJson(exchange, error, 403);
+                    return;
                 } catch (IOException e) {
                     JsonObject error = new JsonObject();
                     error.addProperty("error", e.getMessage());
@@ -1005,7 +1072,9 @@ public class WebStart {
                 path = path + "\\";
             }
             java.io.File dir = new java.io.File(path).getCanonicalFile();
-            if (!workspacePolicy.isAllowed(dir)) {
+            // Local Web can browse freely; write/read authorization is checked when a directory is selected.
+            boolean unrestrictedLocalBrowse = localOnlyBind;
+            if (!unrestrictedLocalBrowse && !workspacePolicy.isAllowed(dir)) {
                 sendJson(exchange, GSON.fromJson("{\"error\":\"目录超出允许的工作区范围\"}", JsonObject.class), 403);
                 return;
             }
@@ -1016,12 +1085,13 @@ public class WebStart {
             JsonObject result = new JsonObject();
             result.addProperty("path", dir.getAbsolutePath());
             File parent = dir.getParentFile();
-            result.addProperty("parent", parent == null || !workspacePolicy.isAllowed(parent) ? "" : parent.getCanonicalPath());
+            result.addProperty("parent", parent == null || (!unrestrictedLocalBrowse && !workspacePolicy.isAllowed(parent)) ? "" : parent.getCanonicalPath());
             File home = new File(System.getProperty("user.home")).getCanonicalFile();
-            result.addProperty("home", workspacePolicy.isAllowed(home) ? home.getPath() : "");
+            result.addProperty("home", unrestrictedLocalBrowse || workspacePolicy.isAllowed(home) ? home.getPath() : "");
             result.addProperty("current", new File(agent.getWorkspaceDir()).getCanonicalPath());
             JsonArray roots = new JsonArray();
-            for (File root : workspacePolicy.getRoots()) {
+            List<File> pickerRoots = unrestrictedLocalBrowse ? Arrays.asList(File.listRoots()) : workspacePolicy.getRoots();
+            for (File root : pickerRoots) {
                 JsonObject rootItem = new JsonObject();
                 rootItem.addProperty("name", root.getAbsolutePath());
                 rootItem.addProperty("path", root.getCanonicalPath());
@@ -1037,7 +1107,7 @@ public class WebStart {
             Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
             for (java.io.File f : files) {
                 if (f.isDirectory() && (includeHidden || !f.isHidden())) {
-                    if (!workspacePolicy.isAllowed(f)) continue;
+                    if (!unrestrictedLocalBrowse && !workspacePolicy.isAllowed(f)) continue;
                     JsonObject dirItem = new JsonObject();
                     dirItem.addProperty("name", f.getName());
                     dirItem.addProperty("path", f.getCanonicalPath());

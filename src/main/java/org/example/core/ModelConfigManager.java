@@ -18,6 +18,7 @@ public final class ModelConfigManager {
         String label = requiredString(form, "label", "模型名称不能为空");
         String value = requiredString(form, "value", "模型标识不能为空");
         String apiUrl = requiredString(form, "apiUrl", "API 地址不能为空");
+        String reasoningEffort = validateReasoningEffort(stringValue(form, "reasoningEffort"));
         validateApiUrl(apiUrl);
 
         JsonArray models = getModels(config);
@@ -45,12 +46,36 @@ public final class ModelConfigManager {
         model.addProperty("value", value);
         model.addProperty("api_url", apiUrl);
         model.addProperty("api_key", apiKey);
+        // Empty reasoning effort means provider default, so remove the persisted field entirely.
+        if (reasoningEffort.isEmpty()) model.remove("reasoning_effort");
+        else model.addProperty("reasoning_effort", reasoningEffort);
         if (editIndex >= 0) models.set(editIndex, model); else models.add(model);
         config.add("models", models);
 
         String currentModel = stringValue(config, "cur_model");
         boolean select = request.has("select") && request.get("select").getAsBoolean();
         if (select || value.equals(currentModel) || (!originalValue.isEmpty() && originalValue.equals(currentModel))) {
+            setCurrentModel(config, model);
+        }
+        return config;
+    }
+
+    public static JsonObject setReasoningEffort(JsonObject sourceConfig, String value, String reasoningEffort) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new IllegalArgumentException("模型标识不能为空");
+        }
+        JsonObject config = copyConfig(sourceConfig);
+        JsonArray models = getModels(config);
+        int index = findModelIndex(models, value.trim());
+        if (index < 0) throw new IllegalArgumentException("未找到模型");
+        JsonObject model = models.get(index).getAsJsonObject().deepCopy();
+        String normalized = validateReasoningEffort(reasoningEffort);
+        // Keep toolbar changes scoped to the selected model, then refresh cur_* if it is active.
+        if (normalized.isEmpty()) model.remove("reasoning_effort");
+        else model.addProperty("reasoning_effort", normalized);
+        models.set(index, model);
+        config.add("models", models);
+        if (value.trim().equals(stringValue(config, "cur_model"))) {
             setCurrentModel(config, model);
         }
         return config;
@@ -116,6 +141,10 @@ public final class ModelConfigManager {
         config.addProperty("cur_model", stringValue(model, "value"));
         config.addProperty("cur_api_url", stringValue(model, "api_url"));
         config.addProperty("cur_api_key", stringValue(model, "api_key"));
+        String reasoningEffort = stringValue(model, "reasoning_effort");
+        // cur_reasoning_effort mirrors the selected model for startup and CLI defaults.
+        if (reasoningEffort.isEmpty()) config.remove("cur_reasoning_effort");
+        else config.addProperty("cur_reasoning_effort", reasoningEffort);
     }
 
     private static JsonObject requireObject(JsonObject source, String key, String message) {
@@ -134,6 +163,16 @@ public final class ModelConfigManager {
     private static String stringValue(JsonObject source, String key) {
         if (source == null || !source.has(key) || source.get(key).isJsonNull()) return "";
         return source.get(key).getAsString().trim();
+    }
+
+    private static String validateReasoningEffort(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isEmpty() || "default".equals(normalized)) return "";
+        if ("low".equals(normalized) || "medium".equals(normalized) || "high".equals(normalized)) {
+            return normalized;
+        }
+        throw new IllegalArgumentException("推理强度只能是默认、低、中、高");
     }
 
     private static void validateApiUrl(String value) {

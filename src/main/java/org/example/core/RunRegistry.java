@@ -13,8 +13,22 @@ public final class RunRegistry {
         return run;
     }
 
+    public AgentRun create(String objective, String model, String apiUrl, String apiKey,
+                           String reasoningEffort, String cwd) {
+        AgentRun run = new AgentRun(UUID.randomUUID().toString(), objective, model, apiUrl, apiKey,
+                reasoningEffort, cwd);
+        runs.put(run.getRunId(), run);
+        return run;
+    }
+
     public AgentRun resume(String runId, String objective, String model, String apiUrl, String apiKey,
                            String cwd, com.google.gson.JsonObject persistedState) throws IOException {
+        return resume(runId, objective, model, apiUrl, apiKey, null, cwd, persistedState);
+    }
+
+    public AgentRun resume(String runId, String objective, String model, String apiUrl, String apiKey,
+                           String reasoningEffort, String cwd,
+                           com.google.gson.JsonObject persistedState) throws IOException {
         AgentRun existing = get(runId);
         if (existing != null) {
             if (!new java.io.File(existing.getCwd()).getCanonicalFile().equals(new java.io.File(cwd).getCanonicalFile())) {
@@ -29,7 +43,7 @@ public final class RunRegistry {
         TaskState state = TaskState.fromJson(persistedState);
         if (state == null || !runId.equals(state.getRunId())) throw new IOException("任务状态不存在或 runId 不匹配");
         if (state.getPhase() == TaskState.Phase.COMPLETE) throw new IOException("已完成任务不能再次恢复");
-        AgentRun restored = new AgentRun(runId, objective, model, apiUrl, apiKey, cwd, state);
+        AgentRun restored = new AgentRun(runId, objective, model, apiUrl, apiKey, reasoningEffort, cwd, state);
         restored.prepareRetry();
         AgentRun raced = runs.putIfAbsent(runId, restored);
         return raced == null ? restored : raced;

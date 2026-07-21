@@ -13,6 +13,7 @@ public final class AgentRun {
     private final String model;
     private final String apiUrl;
     private final String apiKey;
+    private final String reasoningEffort;
     private final String cwd;
     private final TaskState taskState;
     private final ChangeJournal changeJournal;
@@ -29,15 +30,26 @@ public final class AgentRun {
     private volatile boolean running;
 
     public AgentRun(String runId, String objective, String model, String apiUrl, String apiKey, String cwd) {
-        this(runId, objective, model, apiUrl, apiKey, cwd, null);
+        this(runId, objective, model, apiUrl, apiKey, null, cwd, null);
+    }
+
+    public AgentRun(String runId, String objective, String model, String apiUrl, String apiKey,
+                    String reasoningEffort, String cwd) {
+        this(runId, objective, model, apiUrl, apiKey, reasoningEffort, cwd, null);
     }
 
     public AgentRun(String runId, String objective, String model, String apiUrl, String apiKey,
                     String cwd, TaskState restoredState) {
+        this(runId, objective, model, apiUrl, apiKey, null, cwd, restoredState);
+    }
+
+    public AgentRun(String runId, String objective, String model, String apiUrl, String apiKey,
+                    String reasoningEffort, String cwd, TaskState restoredState) {
         this.runId = runId == null || runId.trim().isEmpty() ? UUID.randomUUID().toString() : runId;
         this.model = model;
         this.apiUrl = apiUrl;
         this.apiKey = apiKey;
+        this.reasoningEffort = reasoningEffort;
         this.cwd = cwd;
         this.taskState = restoredState == null ? new TaskState(this.runId, objective) : restoredState;
         if (!this.runId.equals(this.taskState.getRunId())) {
@@ -50,6 +62,7 @@ public final class AgentRun {
     public String getModel() { return model; }
     public String getApiUrl() { return apiUrl; }
     public String getApiKey() { return apiKey; }
+    public String getReasoningEffort() { return reasoningEffort; }
     public String getCwd() { return cwd; }
     public TaskState getTaskState() { return taskState; }
     public ChangeJournal getChangeJournal() { return changeJournal; }

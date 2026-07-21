@@ -410,12 +410,12 @@
         .model-form-heading { font-size: 14px; font-weight: 600; margin-bottom: 14px; }
         .model-form-grid { display: grid; gap: 12px; }
         .model-field label { display: block; color: var(--text-secondary); font-size: 12px; font-weight: 600; margin-bottom: 5px; }
-        .model-field input {
+        .model-field input, .model-field select {
             width: 100%; border: 1px solid var(--border-color); border-radius: 7px;
             background: var(--bg-white); color: var(--text-main); font-size: 13px;
             padding: 8px 10px; outline: none;
         }
-        .model-field input:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 2px rgba(9,105,218,0.12); }
+        .model-field input:focus, .model-field select:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 2px rgba(9,105,218,0.12); }
         .model-field-help { color: var(--text-muted); font-size: 11px; line-height: 1.5; margin-top: 4px; }
         .model-select-after-save { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; }
         .model-select-after-save input { width: auto; }
@@ -869,6 +869,12 @@
                 <div class="input-toolbar">
                     <select id="modelSelect" class="toolbar-select" onchange="switchModel()"></select>
                     <button id="modelConfigBtn" class="model-config-btn" type="button" title="配置模型" aria-label="配置模型" onclick="openModelConfig()" data-lockable><i class="fas fa-gear"></i></button>
+                    <select id="reasoningEffortSelect" class="toolbar-select" title="推理强度" aria-label="推理强度" onchange="switchReasoningEffort()" data-lockable>
+                        <option value="">默认推理</option>
+                        <option value="low">低推理</option>
+                        <option value="medium">中推理</option>
+                        <option value="high">高推理</option>
+                    </select>
                     <div class="toolbar-sep"></div>
                     <div class="mode-btns">
                         <button class="mode-btn" onclick="setAgentMode('plan')" id="mode-plan" data-lockable>Plan</button>
@@ -924,6 +930,16 @@
                         <input id="modelApiKeyInput" type="password" autocomplete="new-password" placeholder="请输入 API Key">
                         <div class="model-field-help" id="modelApiKeyHelp">新增模型时必须填写，保存后不会在页面中回显。</div>
                     </div>
+                    <div class="model-field">
+                        <label for="modelReasoningEffortInput">推理强度</label>
+                        <select id="modelReasoningEffortInput">
+                            <option value="">默认</option>
+                            <option value="low">低</option>
+                            <option value="medium">中</option>
+                            <option value="high">高</option>
+                        </select>
+                        <div class="model-field-help">选择默认时不会向接口发送 reasoning_effort。</div>
+                    </div>
                     <label class="model-select-after-save">
                         <input id="modelSelectAfterSave" type="checkbox" checked>
                         保存后设为当前模型
@@ -963,6 +979,7 @@
     var currentMode = 'confirm';
     var modelsCache = [];
     var selectedModel = '';
+    var currentReasoningEffort = '';
     var currentCwd = '';
     var toolCallCount = 0;
     var currentSessionId = '';
@@ -1002,7 +1019,12 @@
         return authFetch(url, opts).then(function (r) {
             return r.text().then(function (text) {
                 var data = text ? JSON.parse(text) : {};
-                if (!r.ok) throw new Error(data.error || data.message || ('HTTP ' + r.status));
+                if (!r.ok) {
+                    var err = new Error(data.error || data.message || ('HTTP ' + r.status));
+                    Object.keys(data || {}).forEach(function (key) { err[key] = data[key]; });
+                    err.status = r.status;
+                    throw err;
+                }
                 return data;
             });
         });
@@ -1131,7 +1153,7 @@
         });
     }
 
-    function setCwd() {
+    function setCwd(authorize) {
         if (isProcessing) return;
         var newCwd = cwdInput.value.trim();
         if (!newCwd || newCwd === currentCwd) {
@@ -1139,7 +1161,7 @@
             markCwdClean();
             return;
         }
-        fetchJson('/cwd', { method: 'POST', body: JSON.stringify({ cwd: newCwd }) })
+        fetchJson('/cwd', { method: 'POST', body: JSON.stringify({ cwd: newCwd, authorize: !!authorize }) })
             .then(function (d) {
                 currentCwd = d.cwd;
                 cwdInput.value = currentCwd;
@@ -1152,6 +1174,14 @@
                 loadProjectTree('');
             })
             .catch(function (err) {
+                if (err.needsAuthorization) {
+                    var path = err.path || newCwd;
+                    if (confirm('是否授权 Fish Code 读写此目录？\n\n' + path + '\n\n授权后，Agent 可以在该目录内读取、搜索、写入文件并执行命令。')) {
+                        cwdInput.value = path;
+                        setCwd(true);
+                        return;
+                    }
+                }
                 addAgentLog('目录切换失败', err.message, 'error');
                 cwdInput.value = currentCwd;
                 markCwdClean();
@@ -1193,6 +1223,14 @@
         }
         sel.value = target;
         selectedModel = sel.value || target;
+        var selectedConfig = findCachedModel(selectedModel);
+        currentReasoningEffort = normalizeReasoningEffort(
+            selectedConfig && selectedConfig.reasoning_effort !== undefined
+                ? selectedConfig.reasoning_effort
+                : (data.reasoningEffort || '')
+        );
+        var reasoningSelect = document.getElementById('reasoningEffortSelect');
+        if (reasoningSelect) reasoningSelect.value = currentReasoningEffort;
         var status = document.getElementById('modelStatus');
         status.style.color = 'var(--text-muted)';
         status.textContent = selectedModel;
@@ -1585,6 +1623,7 @@
         if (draft.resumeRunId) chatPayload.resumeRunId = draft.resumeRunId;
         if (draft.resumeRunId && currentSessionId) chatPayload.sessionId = currentSessionId;
         if (selectedModel) chatPayload.model = selectedModel;
+        if (currentReasoningEffort) chatPayload.reasoningEffort = currentReasoningEffort;
         if (currentCwd) chatPayload.cwd = currentCwd;
 
         var fetchOpts = { method: 'POST', body: JSON.stringify(chatPayload) };
@@ -2385,6 +2424,37 @@
         });
     }
 
+    function switchReasoningEffort() {
+        if (isProcessing) return;
+        var sel = document.getElementById('reasoningEffortSelect');
+        var status = document.getElementById('modelStatus');
+        var previous = currentReasoningEffort;
+        var next = normalizeReasoningEffort(sel.value);
+        currentReasoningEffort = next;
+        if (!selectedModel) return;
+        status.style.color = 'var(--text-muted)';
+        status.textContent = '保存中…';
+        fetchJson('/config', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'setReasoningEffort', value: selectedModel, reasoningEffort: next })
+        }).then(function (d) {
+            applyConfigData(d, selectedModel);
+            status.style.color = 'var(--accent-green)';
+            status.textContent = selectedModel;
+            addAgentLog('推理强度', reasoningEffortLabel(currentReasoningEffort), 'success');
+        }).catch(function (err) {
+            currentReasoningEffort = previous;
+            sel.value = previous;
+            status.style.color = 'var(--accent-red)';
+            status.textContent = '保存失败';
+            addAgentLog('推理强度保存失败', err.message, 'error');
+        });
+    }
+
+    function reasoningEffortLabel(value) {
+        return { low: '低', medium: '中', high: '高' }[value] || '默认';
+    }
+
     function openModelConfig() {
         if (isProcessing) return;
         var overlay = document.getElementById('modelConfigOverlay');
@@ -2409,6 +2479,11 @@
         return null;
     }
 
+    function normalizeReasoningEffort(value) {
+        value = (value || '').toString().trim().toLowerCase();
+        return value === 'low' || value === 'medium' || value === 'high' ? value : '';
+    }
+
     function startNewModel() {
         document.getElementById('modelFormHeading').textContent = '新增模型';
         document.getElementById('modelOriginalValue').value = '';
@@ -2416,6 +2491,7 @@
         document.getElementById('modelValueInput').value = '';
         document.getElementById('modelApiUrlInput').value = '';
         document.getElementById('modelApiKeyInput').value = '';
+        document.getElementById('modelReasoningEffortInput').value = '';
         document.getElementById('modelApiKeyInput').placeholder = '请输入 API Key';
         document.getElementById('modelApiKeyHelp').textContent = '新增模型时必须填写，保存后不会在页面中回显。';
         document.getElementById('modelSelectAfterSave').checked = true;
@@ -2433,6 +2509,7 @@
         document.getElementById('modelValueInput').value = model.value || '';
         document.getElementById('modelApiUrlInput').value = model.api_url || '';
         document.getElementById('modelApiKeyInput').value = '';
+        document.getElementById('modelReasoningEffortInput').value = normalizeReasoningEffort(model.reasoning_effort);
         document.getElementById('modelApiKeyInput').placeholder = model.apiKeyConfigured ? '已配置，留空则保留' : '请输入 API Key';
         document.getElementById('modelApiKeyHelp').textContent = model.apiKeyConfigured
             ? 'API Key 已配置；留空保存会保留原 Key。'
@@ -2509,7 +2586,8 @@
         var form = {
             label: document.getElementById('modelLabelInput').value.trim(),
             value: document.getElementById('modelValueInput').value.trim(),
-            apiUrl: document.getElementById('modelApiUrlInput').value.trim()
+            apiUrl: document.getElementById('modelApiUrlInput').value.trim(),
+            reasoningEffort: normalizeReasoningEffort(document.getElementById('modelReasoningEffortInput').value)
         };
         if (apiKey) form.apiKey = apiKey;
         var payload = {
@@ -2704,10 +2782,14 @@
     }
 
     function confirmCwdPicker() {
+        if (!pickerCurrentPath) return;
+        if (!confirm('是否授权 Fish Code 读写此目录？\n\n' + pickerCurrentPath + '\n\n授权后，Agent 可以在该目录内读取、搜索、写入文件并执行命令。')) {
+            return;
+        }
         cwdInput.value = pickerCurrentPath;
         markCwdDirty();
         closeCwdPicker();
-        setCwd();
+        setCwd(true);
     }
 
     function setProcessingUI(running) {

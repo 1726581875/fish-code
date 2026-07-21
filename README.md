@@ -44,6 +44,9 @@ java -jar target/fish-code.jar /path/to/project
 java -cp target/fish-code.jar org.example.TerminalStart /path/to/project
 ```
 
+终端中可用 `Shift+Tab` 循环切换运行模式；输入 `/model` 可通过上下键或序号选择模型，
+也可用 `/model <序号或模型名>` 直接切换。模型选择会保存到 `~/.fish-code/config.json`。
+
 ## 配置
 
 持久化配置保存在 `~/.fish-code/config.json`。常用字段示例：

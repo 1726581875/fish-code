@@ -11,6 +11,8 @@ import org.example.core.*;
 import org.example.tool.*;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.InfoCmp;
+import org.jline.utils.NonBlockingReader;
 
 
 
@@ -27,10 +29,13 @@ public class TerminalStart {
     private static volatile Process activeProcess = null;
     private static final ThreadLocal<AgentRun> currentRun = new ThreadLocal<>();
     private static volatile AgentRun legacyActiveRun;
+    private static final long ESCAPE_SEQUENCE_TIMEOUT_MS = 100L;
+    private static final double AGENT_TEMPERATURE = 0.2;
 
     private volatile String apiUrl;
     private volatile String apiKey;
     private volatile String model;
+    private volatile String reasoningEffort = "";
 
     // Per-request working directory - ThreadLocal for tool execution context
     private static final ThreadLocal<String> currentCwd = new ThreadLocal<>();
@@ -135,20 +140,27 @@ public class TerminalStart {
         return stopRequested;
     }
 
-    // Per-request model override support
+    // Web requests can override the CLI/global defaults without mutating the shared agent.
     private static final java.util.concurrent.ConcurrentHashMap<Long, String> requestModelOverrides = new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.concurrent.ConcurrentHashMap<Long, String[]> requestConnOverrides = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<Long, String> requestReasoningOverrides = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static void setRequestOverride(String model, String apiUrl, String apiKey) {
+        setRequestOverride(model, apiUrl, apiKey, null);
+    }
+
+    public static void setRequestOverride(String model, String apiUrl, String apiKey, String reasoningEffort) {
         long tid = Thread.currentThread().getId();
         if (model != null) requestModelOverrides.put(tid, model);
         if (apiUrl != null || apiKey != null) requestConnOverrides.put(tid, new String[]{apiUrl, apiKey});
+        if (reasoningEffort != null) requestReasoningOverrides.put(tid, reasoningEffort);
     }
 
     public static void clearRequestOverride() {
         long tid = Thread.currentThread().getId();
         requestModelOverrides.remove(tid);
         requestConnOverrides.remove(tid);
+        requestReasoningOverrides.remove(tid);
     }
 
     private String getOverrideModel() {
@@ -164,12 +176,21 @@ public class TerminalStart {
         }
         return requestConnOverrides.get(Thread.currentThread().getId());
     }
+
+    private String getOverrideReasoningEffort() {
+        AgentRun run = currentRun.get();
+        // A run keeps the exact reasoning setting it started with, including empty = provider default.
+        if (run != null && run.getReasoningEffort() != null) return run.getReasoningEffort();
+        String override = requestReasoningOverrides.get(Thread.currentThread().getId());
+        return override != null ? override : reasoningEffort;
+    }
     private final List<JsonObject> messages = new ArrayList<>();
     private List<Tool> tools;
     private final Map<String, Tool> toolMap = new HashMap<>();
     private AgentMode currentMode;
     private Terminal terminal;
-    private Reader terminalReader;
+    private NonBlockingReader terminalReader;
+    private String terminalBackwardTabSequence;
     private ActionConfirmer actionConfirmer;
     private final SessionManager sessionManager;
     private String currentSessionId;
@@ -195,11 +216,15 @@ public class TerminalStart {
     public String getApiUrl() { return apiUrl; }
     public String getApiKey() { return apiKey; }
     public String getModel() { return model; }
+    public String getReasoningEffort() { return reasoningEffort; }
     public String getWorkspaceDir() { return System.getProperty("user.dir"); }
 
     public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }
     public void setModel(String model) { this.model = model; }
+    public void setReasoningEffort(String reasoningEffort) {
+        this.reasoningEffort = normalizeReasoningEffort(reasoningEffort);
+    }
 
     public String setWorkspaceDir(String path) throws IOException {
         if (path == null || path.trim().isEmpty()) {
@@ -220,7 +245,9 @@ public class TerminalStart {
 
     public void setTerminal(Terminal terminal) throws IOException {
         this.terminal = terminal;
-        this.terminalReader = new InputStreamReader(terminal.input(), StandardCharsets.UTF_8);
+        this.terminalReader = terminal.reader();
+        this.terminalBackwardTabSequence = normalizeEscapeSequence(
+                terminal.getStringCapability(InfoCmp.Capability.key_btab));
     }
 
     public Terminal getTerminal() {
@@ -767,6 +794,12 @@ public class TerminalStart {
         String overrideModel = getOverrideModel();
         String effectiveModel = (overrideModel != null) ? overrideModel : model;
         body.addProperty("model", effectiveModel);
+        body.addProperty("temperature", AGENT_TEMPERATURE);
+        String effectiveReasoningEffort = normalizeReasoningEffort(getOverrideReasoningEffort());
+        if (!effectiveReasoningEffort.isEmpty()) {
+            // Omit the field for default so OpenAI-compatible providers that lack it still work.
+            body.addProperty("reasoning_effort", effectiveReasoningEffort);
+        }
         body.add("messages", getMessagesJson());
         body.add("tools", toolsJson);
         return body;
@@ -1249,6 +1282,7 @@ public class TerminalStart {
                 "https://api.deepseek.com/chat/completions");
         String apiKey = ConfigLoader.getConfigString("cur_api_key", "DEEPSEEK_API_KEY", "");
         String model = ConfigLoader.getConfigString("cur_model", "DEEPSEEK_MODEL", "deepseek-chat");
+        String reasoningEffort = ConfigLoader.getConfigString("cur_reasoning_effort", "FISH_REASONING_EFFORT", "");
         String workspaceDir = args.length > 0
                 ? args[0]
                 : ConfigLoader.getConfigString("workspace_dir", "FISH_CODE_WORKDIR", System.getProperty("user.dir"));
@@ -1260,6 +1294,7 @@ public class TerminalStart {
 
         SessionManager sessionManager = new SessionManager();
         TerminalStart agent = new TerminalStart(apiUrl, apiKey, model, sessionManager);
+        agent.setReasoningEffort(reasoningEffort);
         agent.setMode(AgentMode.CONFIRM);
         try {
             agent.setWorkspaceDir(workspaceDir);
@@ -1269,7 +1304,8 @@ public class TerminalStart {
         }
 
         printBanner(model);
-        System.out.println("  " + modeStatusBar(AgentMode.CONFIRM) + "  Shift+Tab 切换 | /cwd 切换目录 | /help 帮助 | exit 退出\n");
+        System.out.println("  " + modeStatusBar(AgentMode.CONFIRM)
+                + "  Shift+Tab 切换模式 | /model 选择模型 | /help 帮助 | exit 退出\n");
 
         Terminal terminal = null;
         try {
@@ -1330,6 +1366,10 @@ public class TerminalStart {
                     printSessionHistory(sessionManager);
                     continue;
                 }
+                if ("/model".equalsIgnoreCase(input) || input.toLowerCase(Locale.ROOT).startsWith("/model ")) {
+                    handleModelCommand(agent, input);
+                    continue;
+                }
                 if (input.startsWith("/cwd")) {
                     handleWorkspaceCommand(agent, input);
                     continue;
@@ -1342,7 +1382,7 @@ public class TerminalStart {
                     System.out.println("  \u001B[36m会话: " + sid);
                     System.out.println("  工作目录: " + agent.getWorkspaceDir());
                     System.out.println("  消息数: " + msgCount + "  |  上下文: " + chars + " 字符 (~" + tokens + " tokens)");
-                    System.out.println("  模式: " + agent.getMode().label() + "\u001B[0m");
+                    System.out.println("  模式: " + agent.getMode().label() + "  |  模型: " + agent.getModel() + "\u001B[0m");
                     continue;
                 }
                 if (input.startsWith("/delete")) {
@@ -1445,61 +1485,46 @@ public class TerminalStart {
                 return result;
             }
 
-            if (c == '\t' && line.length() == 0) {
-                AgentMode newMode = currentMode.next();
-                setMode(newMode);
-                String newPrompt = buildPrompt(newMode);
-                terminal.writer().print("\r" + newPrompt + "  (" + newMode.shortDesc() + ")");
-                terminal.writer().print("\r" + newPrompt);
-                terminal.writer().flush();
+            if (c == '\t') {
+                // 普通 Tab 不承担模式切换，也不向输入中插入不可见字符。
                 continue;
             }
 
             if (c == 27) {
-                int peek = terminalReader.read();
-                if (peek == '[') {
-                    int seq = terminalReader.read();
-                    if (seq == 'Z') {
-                        AgentMode newMode = currentMode.prev();
-                        setMode(newMode);
-                        String newPrompt = buildPrompt(newMode);
-                        terminal.writer().print("\r" + newPrompt + line);
-                        terminal.writer().flush();
-                        continue;
-                    } else if (seq == 'A') {
-                        if (historyIndex == -1) {
-                            savedLine = line.toString();
-                            historyIndex = inputHistory.size();
-                        }
-                        if (historyIndex > 0) {
-                            historyIndex--;
-                            replaceLine(line, terminal, inputHistory.get(historyIndex));
-                        }
-                        continue;
-                    } else if (seq == 'B') {
-                        if (historyIndex >= 0 && historyIndex < inputHistory.size() - 1) {
-                            historyIndex++;
-                            replaceLine(line, terminal, inputHistory.get(historyIndex));
-                        } else if (historyIndex == inputHistory.size() - 1) {
-                            historyIndex = -1;
-                            replaceLine(line, terminal, savedLine);
-                        }
-                        continue;
+                String sequence = readEscapeSequence();
+                if (isBackwardTabSequence(sequence, terminalBackwardTabSequence)) {
+                    switchInputMode(currentMode.next(), line);
+                    continue;
+                }
+                if (isArrowSequence(sequence, 'A')) {
+                    if (historyIndex == -1) {
+                        savedLine = line.toString();
+                        historyIndex = inputHistory.size();
                     }
+                    if (historyIndex > 0) {
+                        historyIndex--;
+                        replaceLine(line, inputHistory.get(historyIndex));
+                    }
+                    continue;
+                }
+                if (isArrowSequence(sequence, 'B')) {
+                    if (historyIndex >= 0 && historyIndex < inputHistory.size() - 1) {
+                        historyIndex++;
+                        replaceLine(line, inputHistory.get(historyIndex));
+                    } else if (historyIndex == inputHistory.size() - 1) {
+                        historyIndex = -1;
+                        replaceLine(line, savedLine);
+                    }
+                    continue;
                 }
                 continue;
             }
 
             if (c == 8 || c == 127) {
                 if (line.length() > 0) {
-                    int removed = line.charAt(line.length() - 1);
-                    line.deleteCharAt(line.length() - 1);
-                    if (removed > 127) {
-                        terminal.writer().print("\b\b  \b\b");
-                    } else {
-                        terminal.writer().print("\b \b");
-                    }
-                    terminal.writer().flush();
+                    int start = Character.offsetByCodePoints(line, line.length(), -1);
+                    line.delete(start, line.length());
+                    redrawInputLine(line);
                 }
                 continue;
             }
@@ -1512,19 +1537,66 @@ public class TerminalStart {
         }
     }
 
-    private void replaceLine(StringBuilder line, Terminal terminal, String replacement) throws IOException {
-        while (line.length() > 0) {
-            int removed = line.charAt(line.length() - 1);
-            line.deleteCharAt(line.length() - 1);
-            if (removed > 127) {
-                terminal.writer().print("\b\b  \b\b");
-            } else {
-                terminal.writer().print("\b \b");
-            }
+    private String readEscapeSequence() throws IOException {
+        int first = terminalReader.read(ESCAPE_SEQUENCE_TIMEOUT_MS);
+        if (first < 0) return "";
+
+        StringBuilder sequence = new StringBuilder();
+        sequence.append((char) first);
+        if (first != '[' && first != 'O') return sequence.toString();
+
+        while (sequence.length() < 32) {
+            int next = terminalReader.read(ESCAPE_SEQUENCE_TIMEOUT_MS);
+            if (next < 0) break;
+            sequence.append((char) next);
+            if (next >= 0x40 && next <= 0x7e) break;
         }
-        line.append(replacement);
-        terminal.writer().print(replacement);
+        return sequence.toString();
+    }
+
+    static boolean isBackwardTabSequence(String sequence) {
+        return isBackwardTabSequence(sequence, null);
+    }
+
+    static boolean isBackwardTabSequence(String sequence, String terminalSequence) {
+        if (sequence == null || sequence.isEmpty()) return false;
+        String normalizedTerminalSequence = normalizeEscapeSequence(terminalSequence);
+        if (!normalizedTerminalSequence.isEmpty() && sequence.equals(normalizedTerminalSequence)) {
+            return true;
+        }
+        if ((sequence.charAt(0) == '[' || sequence.charAt(0) == 'O') && sequence.endsWith("Z")) {
+            return true;
+        }
+        // ESC+Tab, xterm modifyOtherKeys and kitty keyboard protocol variants.
+        return "\t".equals(sequence) || "[27;2;9~".equals(sequence)
+                || "[9;2u".equals(sequence) || "[9;2~".equals(sequence);
+    }
+
+    private static String normalizeEscapeSequence(String sequence) {
+        if (sequence == null || sequence.isEmpty()) return "";
+        return sequence.charAt(0) == 27 ? sequence.substring(1) : sequence;
+    }
+
+    private static boolean isArrowSequence(String sequence, char direction) {
+        return sequence != null && sequence.length() >= 2
+                && (sequence.charAt(0) == '[' || sequence.charAt(0) == 'O')
+                && sequence.charAt(sequence.length() - 1) == direction;
+    }
+
+    private void switchInputMode(AgentMode newMode, StringBuilder line) {
+        setMode(newMode);
+        redrawInputLine(line);
+    }
+
+    private void redrawInputLine(CharSequence line) {
+        terminal.writer().print("\r\u001B[2K" + buildPrompt(currentMode) + line);
         terminal.writer().flush();
+    }
+
+    private void replaceLine(StringBuilder line, String replacement) {
+        line.setLength(0);
+        line.append(replacement);
+        redrawInputLine(line);
     }
 
     private static void handleResume(TerminalStart agent, SessionManager sessionManager, String input) {
@@ -1567,6 +1639,192 @@ public class TerminalStart {
         }
     }
 
+    private static void handleModelCommand(TerminalStart agent, String input) {
+        JsonObject config = ConfigLoader.loadConfig();
+        List<JsonObject> models = configuredModels(config);
+        if (models.isEmpty()) {
+            System.out.println("  \u001B[33m没有已配置的模型，请先在 ~/.fish-code/config.json 的 models 中添加模型。\u001B[0m");
+            return;
+        }
+
+        String selection = input.length() > 6 ? input.substring(6).trim() : "";
+        if (selection.isEmpty()) {
+            printModelChoices(models, agent.getModel());
+            selection = agent.readModelSelection(models, agent.getModel());
+            if (selection == null) {
+                System.out.println("  \u001B[90m已取消模型切换\u001B[0m");
+                return;
+            }
+        }
+
+        JsonObject selected = resolveConfiguredModel(config, selection);
+        if (selected == null) {
+            System.out.println("  \u001B[33m未找到模型: " + selection + "\u001B[0m");
+            System.out.println("  \u001B[90m可使用序号、模型名称或模型标识，例如 /model 2\u001B[0m");
+            return;
+        }
+
+        String value = configString(selected, "value");
+        try {
+            JsonObject updated = ModelConfigManager.selectModel(config, value);
+            String selectedApiUrl = configString(updated, "cur_api_url");
+            if (configString(updated, "cur_api_key").isEmpty()
+                    && !agent.getApiKey().isEmpty()
+                    && selectedApiUrl.equals(agent.getApiUrl())) {
+                // Models on the same endpoint commonly share one top-level API key.
+                updated.addProperty("cur_api_key", agent.getApiKey());
+            }
+            ConfigLoader.saveConfig(updated);
+            agent.setModel(configString(updated, "cur_model"));
+            agent.setApiUrl(configString(updated, "cur_api_url"));
+            agent.setApiKey(configString(updated, "cur_api_key"));
+            agent.setReasoningEffort(configString(updated, "cur_reasoning_effort"));
+
+            String label = configString(selected, "label");
+            System.out.println("  \u001B[36m已切换模型: " + label + " (" + value + ")\u001B[0m");
+            if (agent.getApiKey().isEmpty()) {
+                System.out.println("  \u001B[33m提示: 该模型尚未配置 API Key。\u001B[0m");
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            System.out.println("  \u001B[31m模型切换失败: " + e.getMessage() + "\u001B[0m");
+        }
+    }
+
+    private String readModelSelection(List<JsonObject> models, String currentModel) {
+        int selectedIndex = 0;
+        for (int i = 0; i < models.size(); i++) {
+            if (Objects.equals(currentModel, configString(models.get(i), "value"))) {
+                selectedIndex = i;
+                break;
+            }
+        }
+
+        StringBuilder typed = new StringBuilder();
+        redrawModelSelection(selectedIndex, models.size(), typed);
+        try {
+            while (true) {
+                int c = terminalReader.read();
+                if (c == -1 || c == 3) {
+                    terminal.writer().println();
+                    terminal.writer().flush();
+                    return null;
+                }
+                if (c == '\r' || c == '\n') {
+                    terminal.writer().println();
+                    terminal.writer().flush();
+                    if (typed.length() == 0) return String.valueOf(selectedIndex + 1);
+                    try {
+                        int choice = Integer.parseInt(typed.toString());
+                        if (choice >= 1 && choice <= models.size()) return typed.toString();
+                    } catch (NumberFormatException ignored) {}
+                    System.out.println("  \u001B[33m请输入 1 - " + models.size() + " 之间的序号。\u001B[0m");
+                    typed.setLength(0);
+                    redrawModelSelection(selectedIndex, models.size(), typed);
+                    continue;
+                }
+                if (c == 27) {
+                    String sequence = readEscapeSequence();
+                    if (sequence.isEmpty()) {
+                        terminal.writer().println();
+                        terminal.writer().flush();
+                        return null;
+                    }
+                    if (isArrowSequence(sequence, 'A')) {
+                        selectedIndex = (selectedIndex - 1 + models.size()) % models.size();
+                        typed.setLength(0);
+                        redrawModelSelection(selectedIndex, models.size(), typed);
+                    } else if (isArrowSequence(sequence, 'B')) {
+                        selectedIndex = (selectedIndex + 1) % models.size();
+                        typed.setLength(0);
+                        redrawModelSelection(selectedIndex, models.size(), typed);
+                    }
+                    continue;
+                }
+                if (c == 8 || c == 127) {
+                    if (typed.length() > 0) typed.deleteCharAt(typed.length() - 1);
+                    redrawModelSelection(selectedIndex, models.size(), typed);
+                    continue;
+                }
+                if (c >= '0' && c <= '9') {
+                    typed.append((char) c);
+                    redrawModelSelection(selectedIndex, models.size(), typed);
+                }
+            }
+        } catch (IOException e) {
+            terminal.writer().println();
+            terminal.writer().flush();
+            System.out.println("  \u001B[31m读取模型选择失败: " + e.getMessage() + "\u001B[0m");
+            return null;
+        }
+    }
+
+    private void redrawModelSelection(int selectedIndex, int count, CharSequence typed) {
+        String value = typed.length() == 0 ? String.valueOf(selectedIndex + 1) : typed.toString();
+        terminal.writer().print("\r\u001B[2K  选择模型 [1-" + count + "]（↑/↓ 调整，Enter 确认，Esc 取消）: " + value);
+        terminal.writer().flush();
+    }
+
+    private static void printModelChoices(List<JsonObject> models, String currentModel) {
+        String reset = "\u001B[0m";
+        String cyan = "\u001B[36m";
+        String gray = "\u001B[90m";
+        System.out.println();
+        System.out.println("  可用模型:");
+        for (int i = 0; i < models.size(); i++) {
+            JsonObject model = models.get(i);
+            String value = configString(model, "value");
+            String marker = Objects.equals(value, currentModel) ? cyan + "●" + reset : "○";
+            System.out.println("    " + marker + " " + (i + 1) + ". " + configString(model, "label")
+                    + "  " + gray + value + reset);
+        }
+        System.out.println();
+    }
+
+    static JsonObject resolveConfiguredModel(JsonObject config, String selection) {
+        List<JsonObject> models = configuredModels(config);
+        String query = selection == null ? "" : selection.trim();
+        if (query.isEmpty()) return null;
+
+        try {
+            int index = Integer.parseInt(query);
+            if (index >= 1 && index <= models.size()) return models.get(index - 1);
+        } catch (NumberFormatException ignored) {}
+
+        for (JsonObject model : models) {
+            if (query.equalsIgnoreCase(configString(model, "value"))
+                    || query.equalsIgnoreCase(configString(model, "label"))) {
+                return model;
+            }
+        }
+        return null;
+    }
+
+    private static List<JsonObject> configuredModels(JsonObject config) {
+        List<JsonObject> models = new ArrayList<>();
+        if (config == null || !config.has("models") || !config.get("models").isJsonArray()) return models;
+        for (JsonElement element : config.getAsJsonArray("models")) {
+            if (element.isJsonObject() && !configString(element.getAsJsonObject(), "value").isEmpty()) {
+                models.add(element.getAsJsonObject());
+            }
+        }
+        return models;
+    }
+
+    private static String configString(JsonObject object, String key) {
+        if (object == null || !object.has(key) || object.get(key).isJsonNull()) return "";
+        return object.get(key).getAsString().trim();
+    }
+
+    private static String normalizeReasoningEffort(String value) {
+        if (value == null) return "";
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty() || "default".equals(normalized)) return "";
+        if ("low".equals(normalized) || "medium".equals(normalized) || "high".equals(normalized)) {
+            return normalized;
+        }
+        return "";
+    }
+
     private static void handleUndo(TerminalStart agent) {
         try {
             List<String> restored = agent.rollbackLastRun();
@@ -1601,7 +1859,8 @@ public class TerminalStart {
         System.out.println(green + "  ██║      ██║ ███████║ ██║  ██║      ╚██████╗ ╚██████╔╝██████╔╝███████╗" + reset);
         System.out.println(green + "  ╚═╝      ╚═╝ ╚══════╝ ╚═╝  ╚═╝       ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝" + reset);
         System.out.println();
-        System.out.println(cyan + "  model: " + model + "  |  Tab 切换模式  |  /help 帮助  |  exit 退出" + reset);
+        System.out.println(cyan + "  model: " + model
+                + "  |  Shift+Tab 切换模式  |  /model 选择模型  |  /help 帮助  |  exit 退出" + reset);
         System.out.println();
     }
 
@@ -1609,8 +1868,7 @@ public class TerminalStart {
         String reset = "\u001B[0m";
         System.out.println();
         System.out.println("  快捷键:");
-        System.out.println("    Tab        - 切换到下一个模式（仅空行时）");
-        System.out.println("    Shift+Tab  - 切换到上一个模式");
+        System.out.println("    Shift+Tab  - 循环切换运行模式");
         System.out.println("    Ctrl+C     - 退出程序");
         System.out.println("    上下箭头    - 浏览历史输入");
         System.out.println();
@@ -1619,6 +1877,11 @@ public class TerminalStart {
         System.out.println("    /mode plan   - 切换到规划模式（只读分析）");
         System.out.println("    /mode auto   - 切换到自动执行模式（无需确认）");
         System.out.println("    /mode confirm- 切换到手动确认模式（每次写入需确认）");
+        System.out.println();
+        System.out.println("  模型命令:");
+        System.out.println("    /model       - 打开模型选择列表");
+        System.out.println("    /model <n>   - 按序号切换模型");
+        System.out.println("    /model <name>- 按模型名称或标识切换模型");
         System.out.println();
         System.out.println("  会话命令:");
         System.out.println("    /new         - 新建空白会话");
