@@ -96,7 +96,15 @@ public final class TaskState {
             remainingRisks.add(shorten(remainingRisk, 500));
         }
         Phase parsed = parsePhase(requestedPhase);
-        if (parsed != null && parsed != Phase.COMPLETE) phase = parsed;
+        if (parsed != null && parsed != Phase.COMPLETE) {
+            phase = parsed;
+            if (parsed == Phase.BLOCKED && blockedReason.isEmpty()) {
+                String risk = remainingRisk == null ? "" : remainingRisk.trim();
+                blockedReason = risk.isEmpty()
+                        ? "Agent 将任务标记为受阻，但没有提供具体原因"
+                        : shorten(risk, 1000);
+            }
+        }
         changed();
     }
 

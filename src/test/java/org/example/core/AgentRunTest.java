@@ -13,6 +13,34 @@ import java.io.InputStreamReader;
 import java.io.File;
 
 public class AgentRunTest extends TestCase {
+    public void testBlockedTaskAlwaysHasVisibleReason() {
+        TaskState missingReason = new TaskState("blocked-a", "ambiguous task");
+        missingReason.updateFromAgent("BLOCKED", "", "", "", "", "", "");
+        assertEquals(TaskState.Phase.BLOCKED, missingReason.getPhase());
+        assertTrue(missingReason.getBlockedReason().contains("没有提供具体原因"));
+
+        TaskState riskFallback = new TaskState("blocked-b", "risky task");
+        riskFallback.updateFromAgent("BLOCKED", "", "", "", "", "", "缺少数据库访问权限");
+        assertEquals("缺少数据库访问权限", riskFallback.getBlockedReason());
+    }
+
+    public void testUserInputCanResolveBeforeWaitStartsAndCancelReleasesWaiter() throws Exception {
+        Path workspace = Files.createTempDirectory("fish-user-input-run-");
+        try {
+            AgentRun run = new AgentRun("input-run", "clarify", "model", "url", "key", workspace.toString());
+            String answeredKey = run.createUserInputRequest();
+            assertTrue(run.resolveUserInput(answeredKey, "方案一"));
+            assertFalse("duplicate answers must be rejected", run.resolveUserInput(answeredKey, "方案二"));
+            assertEquals("方案一", run.awaitUserInput(answeredKey, 1, java.util.concurrent.TimeUnit.SECONDS));
+
+            String cancelledKey = run.createUserInputRequest();
+            run.requestStop();
+            assertNull(run.awaitUserInput(cancelledKey, 1, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            Files.deleteIfExists(workspace);
+        }
+    }
+
     public void testConfirmationAndCancellationAreIsolatedByRun() throws Exception {
         Path workspace = Files.createTempDirectory("fish-run-isolation-");
         AgentRun first = new AgentRun("run-a", "first", "model", "url", "key", workspace.toString());

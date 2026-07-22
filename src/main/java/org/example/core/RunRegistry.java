@@ -63,6 +63,11 @@ public final class RunRegistry {
         return run != null && run.resolveConfirmation(key, approved, approveAll);
     }
 
+    public boolean submitUserInput(String runId, String key, String answer) {
+        AgentRun run = get(runId);
+        return run != null && run.resolveUserInput(key, answer);
+    }
+
     public List<String> rollback(String runId) throws IOException {
         AgentRun run = get(runId);
         if (run == null) throw new IOException("任务不存在或已过期");

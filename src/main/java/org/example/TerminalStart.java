@@ -31,6 +31,7 @@ public class TerminalStart {
     private static volatile AgentRun legacyActiveRun;
     private static final long ESCAPE_SEQUENCE_TIMEOUT_MS = 100L;
     private static final double AGENT_TEMPERATURE = 0.2;
+    private static final long USER_INPUT_TIMEOUT_SECONDS = 600L;
 
     private volatile String apiUrl;
     private volatile String apiKey;
@@ -361,6 +362,7 @@ public class TerminalStart {
         all.add(new EditFileTool());
         all.add(new WriteFileTool());
         all.add(new RunCommandTool());
+        all.add(new RequestUserInputTool());
         all.add(new UpdateTaskTool());
 
         List<Tool> list = new ArrayList<>();
@@ -577,6 +579,12 @@ public class TerminalStart {
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
             String callId = toolCall.get("id").getAsString();
 
+            if (RequestUserInputTool.NAME.equals(fnName)) {
+                System.out.println("[等待用户补充] " + fnArgs);
+                requestUserInputAndAddResult(fnArgs, callId, null);
+                continue;
+            }
+
             if (shouldConfirm(fnName, fnArgs)) {
                 boolean approved = confirmAction(fnName, fnArgs);
                 if (!approved) {
@@ -601,6 +609,14 @@ public class TerminalStart {
             String fnName = toolCall.getAsJsonObject("function").get("name").getAsString();
             String fnArgs = toolCall.getAsJsonObject("function").get("arguments").getAsString();
             String callId = toolCall.get("id").getAsString();
+
+            if (RequestUserInputTool.NAME.equals(fnName)) {
+                callback.onToolCall(fnName, fnArgs, "waiting");
+                ToolResult result = requestUserInputAndAddResult(fnArgs, callId, callback);
+                callback.onToolResult(fnName, fnArgs, "done", result.getDetails());
+                if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
+                continue;
+            }
 
             if (shouldConfirm(fnName, fnArgs)) {
                 boolean approved;
@@ -633,6 +649,121 @@ public class TerminalStart {
             }
             if (activeRun != null && activeRun.getTaskState().isTerminal()) return;
         }
+    }
+
+    /**
+     * 将模型生成的结构化问题转换成网页事件或终端提示，并把答案记录为工具结果，
+     * 这样模型可以在同一次任务中带着用户的决定继续推理。
+     */
+    private ToolResult requestUserInputAndAddResult(String fnArgs, String callId,
+                                                     StreamCallback callback) throws IOException {
+        AgentRun run = currentRun.get();
+        if (run != null) {
+            run.getTaskState().markToolActivity(RequestUserInputTool.NAME);
+            ToolResult previous = run.getExecutedResult(callId);
+            if (previous != null) {
+                JsonObject replayDetails = previous.getDetails().deepCopy();
+                replayDetails.addProperty("replayed", true);
+                return addToolResultMessage(callId,
+                        new ToolResult(previous.getContent() + "\n(已复用之前的用户回答)", replayDetails));
+            }
+        }
+
+        ToolResult prepared;
+        try {
+            JsonObject parsedArgs = GSON.fromJson(fnArgs, JsonObject.class);
+            if (parsedArgs == null) parsedArgs = new JsonObject();
+            prepared = toolMap.get(RequestUserInputTool.NAME).executeDetailed(parsedArgs);
+        } catch (Exception e) {
+            JsonObject details = new JsonObject();
+            details.addProperty("error", "invalid_user_input_request");
+            details.addProperty("message", e.getMessage());
+            prepared = new ToolResult("澄清问题参数无效: " + e.getMessage(), details);
+        }
+        if (prepared.getDetails().has("error")) {
+            if (run != null) run.recordExecutedResult(callId, prepared);
+            return addToolResultMessage(callId, prepared);
+        }
+
+        JsonObject request = prepared.getDetails().deepCopy();
+        String answer = null;
+        if (terminal != null) {
+            answer = promptForUserInput(request);
+        } else if (callback != null && run != null) {
+            String inputKey = run.createUserInputRequest();
+            callback.onUserInputRequired(run.getRunId(), inputKey, request.deepCopy());
+            answer = run.awaitUserInput(inputKey, USER_INPUT_TIMEOUT_SECONDS,
+                    java.util.concurrent.TimeUnit.SECONDS);
+        }
+
+        ToolResult result;
+        if (answer == null || answer.trim().isEmpty()) {
+            JsonObject details = request.deepCopy();
+            String status;
+            String content;
+            if (run != null && run.isStopRequested()) {
+                status = "cancelled";
+                content = "用户取消了当前任务，未回答澄清问题。";
+            } else if (callback == null && terminal == null) {
+                status = "unsupported";
+                content = "当前请求方式不支持交互式澄清，请在回复中直接向用户提问。";
+            } else {
+                status = "timeout";
+                content = "用户未在规定时间内回答澄清问题，请停止执行并说明仍需确认的内容。";
+            }
+            details.addProperty("status", status);
+            result = new ToolResult(content, details);
+        } else {
+            String normalizedAnswer = answer.trim();
+            JsonObject details = request.deepCopy();
+            details.addProperty("status", "answered");
+            details.addProperty("answer", normalizedAnswer);
+            String selectedOption = findSelectedOption(request, normalizedAnswer);
+            if (!selectedOption.isEmpty()) details.addProperty("selectedOption", selectedOption);
+            String content = selectedOption.isEmpty()
+                    ? "用户补充了自己的描述：" + normalizedAnswer + "\n请依据这段描述继续当前任务。"
+                    : "用户选择了方案：" + normalizedAnswer + "\n请依据该选择继续当前任务。";
+            result = new ToolResult(content, details);
+        }
+        if (run != null) run.recordExecutedResult(callId, result);
+        return addToolResultMessage(callId, result);
+    }
+
+    private String promptForUserInput(JsonObject request) throws IOException {
+        PrintWriter writer = terminal.writer();
+        writer.println();
+        writer.println("  需要你选择：" + request.get("question").getAsString());
+        JsonArray options = request.getAsJsonArray("options");
+        for (int i = 0; i < options.size(); i++) {
+            JsonObject option = options.get(i).getAsJsonObject();
+            writer.println("  [" + (i + 1) + "] " + option.get("label").getAsString()
+                    + (option.get("recommended").getAsBoolean() ? "（推荐）" : ""));
+            String description = option.get("description").getAsString();
+            if (!description.isEmpty()) writer.println("      " + description);
+        }
+        writer.print("  输入序号或自己的描述：");
+        writer.flush();
+        String input = readInputLine();
+        if (input == null) return null;
+        String trimmed = input.trim();
+        try {
+            int selected = Integer.parseInt(trimmed);
+            if (selected >= 1 && selected <= options.size()) {
+                return options.get(selected - 1).getAsJsonObject().get("label").getAsString();
+            }
+        } catch (NumberFormatException ignored) {}
+        return trimmed;
+    }
+
+    private static String findSelectedOption(JsonObject request, String answer) {
+        JsonArray options = request.getAsJsonArray("options");
+        for (JsonElement element : options) {
+            JsonObject option = element.getAsJsonObject();
+            if (option.get("label").getAsString().equals(answer)) {
+                return option.get("id").getAsString();
+            }
+        }
+        return "";
     }
 
     private boolean shouldConfirm(String fnName, String fnArgs) {

@@ -331,6 +331,20 @@
         .msg-body th, .msg-body td { border: 1px solid var(--border-color); padding: 6px 10px; font-size: 13px; text-align: left; }
         .msg-body th { background: var(--bg-gray); font-weight: 600; }
         .msg-body hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
+        .response-content > :first-child { margin-top: 0; }
+        .response-content > :last-child { margin-bottom: 0; }
+        .response-content > p:first-child:not(:last-child) {
+            margin-bottom: 12px; color: var(--text-main); font-weight: 600; line-height: 1.65;
+        }
+        .response-content h1, .response-content h2 {
+            border-bottom: none; padding: 0 0 0 9px;
+            border-left: 3px solid var(--accent-blue);
+        }
+        .response-content h2 { margin-top: 20px; }
+        .response-content h3 { margin-top: 16px; color: var(--text-secondary); }
+        .response-content ul, .response-content ol { margin-top: 8px; margin-bottom: 10px; }
+        .response-content li { padding-left: 2px; }
+        .response-content li + li { margin-top: 5px; }
 
         /* ================= 工具调用 ================= */
         .tool-block {
@@ -485,20 +499,45 @@
         .agent-response .response-content:empty { display: none; }
         .agent-response.has-content .response-status { display: none; }
         .agent-response.has-content .msg-body { min-height: 0; }
-        .response-tools { display: none; margin: 10px 0 4px; border: 1px solid var(--border-light); border-radius: 8px; overflow: hidden; }
-        .response-tools.has-items { display: block; }
+        .response-tools-details {
+            display: none; margin: 12px 0 0; border: 1px solid var(--border-light);
+            border-radius: 8px; background: var(--bg-white); overflow: hidden;
+        }
+        .response-tools-details.has-items { display: block; }
+        .response-tools-summary {
+            min-height: 36px; padding: 8px 12px; cursor: pointer; list-style: none;
+            display: flex; align-items: center; gap: 8px;
+            background: #f6f8fa; color: var(--text-secondary); font-size: 12px; font-weight: 600;
+        }
+        .response-tools-summary::-webkit-details-marker { display: none; }
+        .response-tools-summary::after {
+            content: '展开'; margin-left: auto; color: var(--text-muted); font-size: 11px; font-weight: 500;
+        }
+        .response-tools-details[open] .response-tools-summary::after { content: '收起'; }
+        .response-tools-summary i { color: var(--accent-green); }
+        .response-tools { display: block; }
         .response-tools .tool-item:last-child { border-bottom: none; }
-        .response-tools .tool-item { background: var(--bg-gray); }
+        .response-tools .tool-item { background: var(--bg-white); }
         .task-panel {
             display: none; padding: 9px 16px; border-bottom: 1px solid var(--border-light);
             background: #f6f8fa; font-size: 12px; color: var(--text-secondary);
         }
         .task-panel.show { display: block; }
+        .response-task-panel {
+            display: none; margin-top: 14px; padding: 11px 12px;
+            border: 1px solid var(--border-light); border-radius: 8px;
+            background: #f6f8fa; color: var(--text-secondary); font-size: 12px;
+        }
+        .response-task-panel.show { display: block; }
         .task-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
         .task-panel-title { color: var(--text-main); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .task-phase { margin-left: auto; color: var(--accent-blue); font-family: var(--font-mono); font-size: 11px; }
-        .task-steps { display: flex; gap: 10px; flex-wrap: wrap; }
-        .task-step::before { content: '○'; margin-right: 4px; color: var(--text-muted); }
+        .task-steps { display: grid; gap: 6px; }
+        .task-step {
+            display: grid; grid-template-columns: 18px minmax(0, 1fr);
+            align-items: start; line-height: 1.45;
+        }
+        .task-step::before { content: '○'; color: var(--text-muted); }
         .task-step.completed::before { content: '✓'; color: var(--accent-green); }
         .task-step.in_progress::before { content: '●'; color: var(--accent-blue); }
         .task-step.blocked::before { content: '!'; color: var(--accent-red); }
@@ -566,6 +605,69 @@
         .confirm-btn-reject:hover { background: #fef2f2; color: var(--accent-red); border-color: var(--accent-red); }
         .confirm-btn-approveAll { background: var(--accent-blue); color: white; border-color: var(--accent-blue); }
         .confirm-btn-approveAll:hover { background: #0757b5; }
+        .clarification-panel {
+            margin: 10px 0; border: 1px solid #b6d7ff; border-radius: 8px;
+            background: var(--bg-white); overflow: hidden;
+        }
+        .clarification-head {
+            min-height: 38px; padding: 9px 12px; border-bottom: 1px solid #dbeafe;
+            background: #f4f8ff; color: var(--accent-blue); font-size: 12px; font-weight: 650;
+            display: flex; align-items: center; gap: 7px;
+        }
+        .clarification-body { padding: 12px; }
+        .clarification-question {
+            color: var(--text-main); font-size: 14px; font-weight: 650;
+            line-height: 1.55; margin-bottom: 10px; overflow-wrap: anywhere;
+        }
+        .clarification-options { display: grid; gap: 7px; }
+        .clarification-option {
+            width: 100%; min-height: 48px; padding: 9px 10px; border: 1px solid var(--border-color);
+            border-radius: 7px; background: var(--bg-white); color: var(--text-main);
+            cursor: pointer; text-align: left; transition: border-color .15s, background .15s;
+        }
+        .clarification-option:hover { border-color: #8cbae8; background: #f4f8ff; }
+        .clarification-option:focus-visible, .clarification-custom-input:focus-visible {
+            outline: 2px solid #8cbae8; outline-offset: 1px;
+        }
+        .clarification-option-row { display: flex; align-items: center; gap: 7px; }
+        .clarification-option-label { font-size: 13px; font-weight: 600; line-height: 1.4; }
+        .clarification-recommended {
+            flex-shrink: 0; padding: 1px 5px; border-radius: 4px;
+            background: #ddf4ff; color: var(--accent-blue); font-size: 10px; font-weight: 650;
+        }
+        .clarification-option-description {
+            display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; line-height: 1.45;
+        }
+        .clarification-custom {
+            display: flex; align-items: flex-end; gap: 7px; margin-top: 10px;
+            padding-top: 10px; border-top: 1px solid var(--border-light);
+        }
+        .clarification-custom-input {
+            flex: 1; min-width: 0; min-height: 38px; max-height: 140px; resize: none;
+            border: 1px solid var(--border-color); border-radius: 7px; padding: 8px 9px;
+            color: var(--text-main); background: var(--bg-white); font: inherit; font-size: 12px; line-height: 1.45;
+        }
+        .clarification-submit {
+            min-width: 76px; height: 38px; padding: 0 12px; border: 1px solid var(--accent-blue);
+            border-radius: 7px; background: var(--accent-blue); color: white; cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 600;
+        }
+        .clarification-submit:hover { background: #0757b5; }
+        .clarification-panel button:disabled, .clarification-panel textarea:disabled { cursor: default; opacity: .62; }
+        .clarification-panel.submitting .clarification-head { color: var(--accent-green); }
+        .clarification-panel.submitting .clarification-option.selected {
+            border-color: var(--accent-green); background: #f0fff4; opacity: 1;
+        }
+        .response-blocked-reason {
+            margin: 10px 0 2px; padding: 11px 12px; border: 1px solid #f1aeb5;
+            border-radius: 7px; background: #fff5f5; color: var(--text-main);
+        }
+        .response-blocked-title {
+            display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+            color: var(--accent-red); font-size: 12px; font-weight: 700;
+        }
+        .response-blocked-text { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+        .response-blocked-next { margin-top: 5px; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
         .tool-item {
             padding: 8px 12px; border-bottom: 1px solid var(--border-light);
             font-size: 12px;
@@ -1870,10 +1972,11 @@
                     saveCwdToHistory(currentCwd);
                 }
                 resetRuntimePanels();
-                renderHistoryMessages(d.messages || []);
+                var restoredResponse = renderHistoryMessages(d.messages || []);
                 currentTaskState = d.task || null;
                 currentRunId = currentTaskState && currentTaskState.runId || '';
-                renderTaskState(currentTaskState);
+                renderTaskState(currentTaskState, restoredResponse);
+                activeResponseMessage = null;
                 updateRunActionButtons(currentTaskState && currentTaskState.phase || '',
                     currentTaskState && currentTaskState.modifiedFiles || []);
                 if (typeof d.contextChars === 'number') updateContextUsage(d.contextChars);
@@ -1888,7 +1991,10 @@
 
     function renderHistoryMessages(messages) {
         messagesContainer.innerHTML = '';
+        activeResponseMessage = null;
         var rendered = 0;
+        var currentAssistant = null;
+        var lastAssistant = null;
         var toolResults = {};
         messages.forEach(function (msg) {
             if ((msg.role || '') === 'tool' && msg.tool_call_id) toolResults[msg.tool_call_id] = msg.content || '';
@@ -1896,55 +2002,87 @@
         messages.forEach(function (msg) {
             var role = msg.role || '';
             if (role === 'system' || role === 'tool') return;
-            var content = msg.content;
-            if (role === 'assistant' && msg.tool_calls) {
-                var turn = addMessage('agent', content && content !== 'null' ? content : '工具执行记录', true);
-                appendHistoryToolCalls(turn, msg.tool_calls, toolResults);
+            var content = normalizeMessageContent(msg.content);
+            if (role === 'user') {
+                currentAssistant = null;
+                if (!content) return;
+                addMessage('user', content, true);
                 rendered++;
                 return;
             }
-            if (!content) return;
-            addMessage(role === 'user' ? 'user' : 'agent', content, true);
-            rendered++;
+            if (role !== 'assistant') return;
+            var toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+            if (!content && !toolCalls.length) return;
+            if (!currentAssistant) {
+                currentAssistant = addMessage('agent', '', true);
+                lastAssistant = currentAssistant;
+                rendered++;
+            }
+            if (content && content !== 'null') appendHistoryResponseContent(currentAssistant, content);
+            if (toolCalls.length) appendHistoryToolCalls(currentAssistant, toolCalls, toolResults);
         });
         if (rendered === 0) {
             renderWelcomeState('这个会话暂无可展示的历史消息。');
         }
         jumpToLatest();
+        return lastAssistant;
+    }
+
+    function appendHistoryResponseContent(messageDiv, content) {
+        if (!messageDiv || !content) return;
+        var contentDiv = messageDiv.querySelector('.response-content');
+        if (!contentDiv) return;
+        var previous = getRawContent(contentDiv);
+        var next = normalizeMessageContent(content);
+        setRawContent(contentDiv, joinResponseSegments(previous, next));
+        contentDiv.innerHTML = renderMarkdown(getRawContent(contentDiv));
+        messageDiv.classList.add('has-content');
+        updateResponseCharCount(messageDiv);
+        highlightCode(contentDiv);
     }
 
     function appendHistoryToolCalls(messageDiv, toolCalls, toolResults) {
         if (!messageDiv || !toolCalls || !toolCalls.length) return;
-        var body = messageDiv.querySelector('.msg-body');
-        if (!body) return;
-        var log = document.createElement('div');
-        log.className = 'response-tools has-items';
+        var log = messageDiv.querySelector('.response-tools-details');
+        if (!log) return;
+        log.classList.add('has-items');
+        var list = log.querySelector('.response-tools');
         toolCalls.forEach(function (tc) {
             var fn = tc.function || {};
             var item = document.createElement('div');
-            item.className = 'tool-item expanded';
+            item.className = 'tool-item';
             var header = document.createElement('div');
             header.className = 'tool-item-header';
+            header.innerHTML = '<i class="fas fa-wrench" style="color:var(--accent-green); font-size:11px;"></i>';
             var name = document.createElement('span');
             name.className = 'tool-item-name';
             name.textContent = fn.name || 'tool_call';
+            var actions = document.createElement('span');
+            actions.className = 'tool-item-actions';
             var status = document.createElement('span');
             status.className = 'tool-item-status done';
-            status.textContent = '历史';
+            status.textContent = '已完成';
             header.appendChild(name);
-            header.appendChild(status);
             var args = document.createElement('div');
             args.className = 'tool-item-args';
-            args.textContent = fn.arguments || '';
+            var fullArgs = String(fn.arguments || '');
+            args.textContent = formatToolArgs(fullArgs);
             var result = document.createElement('div');
             result.className = 'tool-item-result';
-            result.textContent = toolResults[tc.id] || '未保存工具结果';
+            result.textContent = formatToolResultText(toolResults[tc.id] || '未保存工具结果');
+            actions.appendChild(status);
+            actions.appendChild(makeMiniButton('fa-up-right-and-down-left-from-center', '展开', function () {
+                item.classList.toggle('expanded');
+            }));
+            actions.appendChild(makeMiniButton('fa-copy', '复制参数', function () { copyText(fullArgs); }));
+            header.appendChild(actions);
             item.appendChild(header);
             item.appendChild(args);
             item.appendChild(result);
-            log.appendChild(item);
+            list.appendChild(item);
         });
-        body.appendChild(log);
+        updateToolDetailsTitle(log);
+        messageDiv.classList.add('has-content');
     }
 
     function formatSessionTime(ms) {
@@ -2042,6 +2180,7 @@
         }
         resetRuntimePanels();
         hideConfirmPanel();
+        settlePendingUserInputPanels();
 
         var msgDiv = createActiveAssistantMsg('AI 正在思考', '分析需求，准备执行...');
         var contentDiv = msgDiv.querySelector('.response-content');
@@ -2094,16 +2233,24 @@
                                     appendStreamToken(contentDiv, evt.content);
                                     scrollToBottom(false);
                                 } else if (evt.type === 'tool_call') {
+                                    markResponseSegmentBreak(contentDiv);
                                     updateActiveResponseStatus(toolStatusTitle(evt.status), evt.name || '工具调用中');
-                                    setResponseState(msgDiv, 'running', evt.status === 'done' ? '继续处理中' : '执行工具中');
-                                    addToolToPanel(evt.name || 'tool_call', evt.args || '', evt.status || 'running', evt.result || null);
-                                    addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name || '工具调用', evt.status === 'done' ? 'success' : 'info');
+                                    setResponseState(msgDiv, 'running', evt.status === 'waiting' ? '等待选择' : (evt.status === 'done' ? '继续处理中' : '执行工具中'));
+                                    if (!(evt.name === 'request_user_input' && evt.status === 'waiting')) {
+                                        addToolToPanel(evt.name || 'tool_call', evt.args || '', evt.status || 'running', evt.result || null);
+                                        addAgentLog(evt.status === 'done' ? '完成' : '执行中', evt.name || '工具调用', evt.status === 'done' ? 'success' : 'info');
+                                    }
                                 } else if (evt.type === 'confirm_required') {
                                     updateActiveResponseStatus('等待你的确认', evt.name || '工具调用需要确认');
                                     setResponseState(msgDiv, 'running', '等待确认');
                                     showConfirmPanel(evt.runId || currentRunId, evt.confirmKey, evt.name || '工具调用', evt.args || '');
+                                } else if (evt.type === 'user_input_required') {
+                                    updateActiveResponseStatus('需要你选择', (evt.request && evt.request.question) || '请确认实现方向');
+                                    setResponseState(msgDiv, 'running', '等待选择');
+                                    showUserInputPanel(evt.runId || currentRunId, evt.inputKey, evt.request || {});
                                 } else if (evt.type === 'done') {
                                     terminalEventReceived = true;
+                                    settlePendingUserInputPanels();
                                     if (!gotFirstToken && evt.reply) {
                                         setRawContent(contentDiv, evt.reply);
                                         beginActiveResponse(msgDiv);
@@ -2117,7 +2264,10 @@
                                     renderTaskState(currentTaskState);
                                     var finalStatus = evt.finalStatus || 'COMPLETE';
                                     if (finalStatus === 'COMPLETE') completeActiveResponse(msgDiv, 'done', '已完成');
-                                    else if (finalStatus === 'BLOCKED') completeActiveResponse(msgDiv, 'error', '任务受阻');
+                                    else if (finalStatus === 'BLOCKED') {
+                                        showBlockedReason(msgDiv, currentTaskState, evt.remainingRisks || []);
+                                        completeActiveResponse(msgDiv, 'error', '任务受阻');
+                                    }
                                     else if (finalStatus === 'CANCELLED') completeActiveResponse(msgDiv, 'stopped', '已取消');
                                     else completeActiveResponse(msgDiv, 'error', '任务中断');
                                     updateRunActionButtons(finalStatus, evt.modifiedFiles || []);
@@ -2127,6 +2277,7 @@
                                     loadSessions();
                                 } else if (evt.type === 'error') {
                                     terminalEventReceived = true;
+                                    settlePendingUserInputPanels();
                                     currentRunId = evt.runId || currentRunId;
                                     if (evt.task) { currentTaskState = evt.task; renderTaskState(currentTaskState); }
                                     beginActiveResponse(msgDiv);
@@ -2144,6 +2295,7 @@
             })
             .then(function () {
                 if (!terminalEventReceived) {
+                    settlePendingUserInputPanels();
                     beginActiveResponse(msgDiv);
                     appendResponseNote(contentDiv, '连接已结束，当前回复可能不完整');
                     completeActiveResponse(msgDiv, 'error', '输出中断');
@@ -2151,6 +2303,7 @@
                 finishProcessing();
             })
             .catch(function (err) {
+                settlePendingUserInputPanels();
                 beginActiveResponse(msgDiv);
                 if (stopRequestedByUser || err.name === 'AbortError') {
                     if (!getRawContent(contentDiv).trim()) {
@@ -2175,6 +2328,7 @@
         stopRequestedByUser = true;
         updateActiveResponseStatus('正在停止', '正在取消当前请求...');
         setResponseState(activeResponseMessage, 'stopped', '正在停止');
+        settlePendingUserInputPanels();
         if (currentRunId) {
             authFetch('/cancel', { method: 'POST', body: JSON.stringify({ runId: currentRunId }) }).catch(function () {});
         }
@@ -2299,32 +2453,51 @@
     }
 
     function addMessage(role, content, forceScroll) {
+        var isUser = role === 'user';
+        if (!isUser) return createCompletedAssistantMsg(content, forceScroll);
         var div = document.createElement('div');
         div.className = 'message ' + role;
-        var isUser = role === 'user';
+        content = normalizeMessageContent(content);
         div.innerHTML =
             '<div class="msg-header ' + role + '">' +
-            '<i class="fas ' + (isUser ? 'fa-user' : 'fa-robot') + '"></i> ' + (isUser ? 'You' : 'Code Agent') +
-            '</div><div class="msg-body">' + renderMarkdown(content) + '</div>' +
-            (isUser ? '' : buildResponseFooter('done', '已完成', String(content || '').length, ''));
+            '<i class="fas fa-user"></i> You' +
+            '</div><div class="msg-body">' + renderMarkdown(content) + '</div>';
         messagesContainer.appendChild(div);
         highlightCode(div);
         scrollToBottom(!!forceScroll || isUser);
         return div;
     }
 
-    function createActiveAssistantMsg(title, subtitle) {
+    function createAssistantMessageShell(state, label, pending) {
         var empty = messagesContainer.querySelector('.welcome-msg');
         if (empty) empty.remove();
         var div = document.createElement('div');
-        div.className = 'message agent agent-response pending';
+        div.className = 'message agent agent-response' + (pending ? ' pending' : ' has-content history-response');
         div.innerHTML = '<div class="msg-header agent"><i class="fas fa-robot"></i> Code Agent</div>' +
             '<div class="msg-body"><div class="response-status ai-status-card">' +
             '<div class="ai-status-icon"><i class="fas fa-spinner spinner"></i></div>' +
             '<div class="ai-status-main"><div class="ai-status-title"></div><div class="ai-status-sub"></div></div>' +
-            '</div><div class="response-tools"></div><div class="response-content"></div></div>' +
-            buildResponseFooter('running', '处理中', 0, '');
+            '</div><div class="response-content"></div><div class="response-task-panel"></div>' +
+            '<details class="response-tools-details"><summary class="response-tools-summary"><i class="fas fa-screwdriver-wrench"></i><span class="response-tools-title">工具调用</span></summary><div class="response-tools"></div></details></div>' +
+            buildResponseFooter(state, label, 0, '');
         messagesContainer.appendChild(div);
+        return div;
+    }
+
+    function createCompletedAssistantMsg(content, forceScroll) {
+        content = normalizeMessageContent(content);
+        var div = createAssistantMessageShell('done', '已完成', false);
+        var contentDiv = div.querySelector('.response-content');
+        setRawContent(contentDiv, content);
+        contentDiv.innerHTML = renderMarkdown(content);
+        updateResponseCharCount(div, content.length);
+        highlightCode(div);
+        scrollToBottom(!!forceScroll);
+        return div;
+    }
+
+    function createActiveAssistantMsg(title, subtitle) {
+        var div = createAssistantMessageShell('running', '处理中', true);
         activeResponseMessage = div;
         updateActiveResponseStatus(title, subtitle);
         scrollToBottom(false);
@@ -2354,6 +2527,8 @@
         }
         setResponseState(msgDiv, state || 'done', label || '已完成');
         updateResponseCharCount(msgDiv);
+        var toolDetails = msgDiv.querySelector('.response-tools-details');
+        if (toolDetails) toolDetails.open = false;
     }
 
     function updateActiveResponseStatus(title, subtitle) {
@@ -2410,6 +2585,37 @@
         contentDiv.appendChild(note);
     }
 
+    function showBlockedReason(msgDiv, task, remainingRisks) {
+        if (!msgDiv) return;
+        var old = msgDiv.querySelector('.response-blocked-reason');
+        if (old) old.remove();
+        task = task || {};
+        var risks = Array.isArray(remainingRisks) ? remainingRisks.filter(Boolean) : [];
+        var reason = String(task.blockedReason || risks[0] || '').trim();
+        if (!reason) reason = 'Agent 没有返回具体阻塞原因。';
+
+        var panel = document.createElement('div');
+        panel.className = 'response-blocked-reason';
+        var title = document.createElement('div');
+        title.className = 'response-blocked-title';
+        title.innerHTML = '<i class="fas fa-circle-exclamation"></i><span>阻塞原因</span>';
+        var text = document.createElement('div');
+        text.className = 'response-blocked-text';
+        text.textContent = reason;
+        panel.appendChild(title);
+        panel.appendChild(text);
+        if (task.nextAction) {
+            var next = document.createElement('div');
+            next.className = 'response-blocked-next';
+            next.textContent = '建议下一步：' + task.nextAction;
+            panel.appendChild(next);
+        }
+        var body = msgDiv.querySelector('.msg-body');
+        if (body) body.appendChild(panel);
+        msgDiv.classList.add('has-content');
+        scrollToBottom(true);
+    }
+
     function getRawContent(contentDiv) {
         if (!contentDiv) return '';
         return typeof contentDiv.__rawText === 'string' ? contentDiv.__rawText : '';
@@ -2420,12 +2626,34 @@
     }
 
     function appendStreamToken(contentDiv, text) {
-        setRawContent(contentDiv, getRawContent(contentDiv) + (text || ''));
+        var current = getRawContent(contentDiv);
+        var next = String(text || '');
+        if (contentDiv && contentDiv.__needsSegmentBreak && current.trim() && next.trim()) {
+            current = joinResponseSegments(current, next);
+            next = '';
+            contentDiv.__needsSegmentBreak = false;
+        } else {
+            current += next;
+            if (contentDiv && next.trim()) contentDiv.__needsSegmentBreak = false;
+        }
+        setRawContent(contentDiv, current);
         if (contentDiv.__renderTimer) return;
         contentDiv.__renderTimer = window.setTimeout(function () {
             contentDiv.__renderTimer = null;
             flushStreamRender(contentDiv, false);
         }, STREAM_RENDER_INTERVAL_MS);
+    }
+
+    function joinResponseSegments(previous, next) {
+        previous = String(previous || '').replace(/\s+$/, '');
+        next = String(next || '').replace(/^\s+/, '');
+        if (!previous) return next;
+        if (!next) return previous;
+        return previous + '\n\n' + next;
+    }
+
+    function markResponseSegmentBreak(contentDiv) {
+        if (contentDiv && getRawContent(contentDiv).trim()) contentDiv.__needsSegmentBreak = true;
     }
 
     function flushStreamRender(contentDiv, finalRender) {
@@ -2459,17 +2687,20 @@
         if (status === 'done') return '工具执行完成';
         if (status === 'rejected') return '工具调用已拒绝';
         if (status === 'confirming') return '等待你的确认';
+        if (status === 'waiting') return '等待你的选择';
         return 'AI 正在调用工具';
     }
 
     function addToolToPanel(name, args, status, result) {
         if (!activeResponseMessage) return;
+        var toolDetails = activeResponseMessage.querySelector('.response-tools-details');
         var toolLog = activeResponseMessage.querySelector('.response-tools');
-        if (!toolLog) return;
-        toolLog.classList.add('has-items');
+        if (!toolDetails || !toolLog) return;
+        toolDetails.classList.add('has-items');
         var fullArgs = String(args || '');
-        var shortArgs = fullArgs.length > 140 ? fullArgs.substring(0, 140) + '...' : fullArgs;
-        var statusLabel = status === 'done' ? '完成' : status === 'rejected' ? '已拒绝' : status === 'confirming' ? '待确认' : '执行中';
+        var formattedArgs = formatToolArgs(fullArgs);
+        var shortArgs = formattedArgs.length > 180 ? formattedArgs.substring(0, 180) + '...' : formattedArgs;
+        var statusLabel = status === 'done' ? '完成' : status === 'rejected' ? '已拒绝' : status === 'confirming' ? '待确认' : status === 'waiting' ? '待选择' : '执行中';
         var key = name + '::' + fullArgs;
         var existing = toolItemsByKey[key];
         if (existing) {
@@ -2479,6 +2710,7 @@
                 existing.resultText = formatToolResult(result);
                 existing.resultEl.textContent = existing.resultText;
             }
+            updateToolDetailsTitle(toolDetails);
             return;
         }
 
@@ -2503,7 +2735,7 @@
         actions.appendChild(statusEl);
         actions.appendChild(makeMiniButton('fa-up-right-and-down-left-from-center', '展开', function () {
             var expanded = div.classList.toggle('expanded');
-            argsEl.textContent = expanded ? fullArgs : shortArgs;
+            argsEl.textContent = expanded ? formattedArgs : shortArgs;
         }));
         actions.appendChild(makeMiniButton('fa-copy', '复制参数', function () { copyText(fullArgs); }));
         header.appendChild(actions);
@@ -2521,24 +2753,47 @@
 
         toolLog.appendChild(div);
         toolItemsByKey[key] = { div: div, statusEl: statusEl, argsEl: argsEl, resultEl: resultEl, resultText: resultEl.textContent };
+        updateToolDetailsTitle(toolDetails);
         scrollToBottom(false);
+    }
+
+    function updateToolDetailsTitle(details) {
+        if (!details) return;
+        var title = details.querySelector('.response-tools-title');
+        var count = details.querySelectorAll('.tool-item').length;
+        if (title) title.textContent = count ? '工具调用 (' + count + ')' : '工具调用';
+    }
+
+    function formatToolArgs(args) {
+        var text = String(args || '').trim();
+        if (!text) return '无参数';
+        try {
+            return JSON.stringify(JSON.parse(text), null, 2);
+        } catch (e) {
+            return text;
+        }
     }
 
     function formatToolResult(result) {
         if (!result) return '';
         var parts = [];
         if (result.type === 'command') {
-            parts.push('$ ' + (result.command || ''));
-            if (result.cwd) parts.push('cwd: ' + result.cwd);
-            if (typeof result.exitCode !== 'undefined') parts.push('exit: ' + result.exitCode + ' | ' + (result.durationMs || 0) + 'ms');
-            if (result.output) parts.push('\n' + result.output);
+            parts.push('命令\n$ ' + (result.command || ''));
+            if (result.cwd) parts.push('目录\n' + result.cwd);
+            if (typeof result.exitCode !== 'undefined') parts.push('状态\nexit ' + result.exitCode + ' · ' + (result.durationMs || 0) + 'ms');
+            if (result.output) parts.push('输出\n' + result.output);
         } else {
-            if (result.path) parts.push(result.path);
-            if (result.diff) parts.push(result.diff);
-            if (result.output) parts.push(result.output);
-            if (result.error) parts.push('error: ' + result.error);
+            if (result.path) parts.push('路径\n' + result.path);
+            if (result.diff) parts.push('变更\n' + result.diff);
+            if (result.output) parts.push('输出\n' + result.output);
+            if (result.error) parts.push('错误\n' + result.error);
         }
-        return parts.filter(Boolean).join('\n');
+        return parts.filter(Boolean).join('\n\n');
+    }
+
+    function formatToolResultText(text) {
+        text = String(text || '').trim();
+        return text || '无输出';
     }
 
     function makeMiniButton(icon, title, handler) {
@@ -2622,6 +2877,185 @@
             });
     }
 
+    function showUserInputPanel(runId, inputKey, request) {
+        settlePendingUserInputPanels();
+        var host = activeResponseMessage && activeResponseMessage.querySelector('.msg-body');
+        if (!host) return;
+        request = normalizeClarificationRequest(request);
+
+        var panel = document.createElement('div');
+        panel.className = 'clarification-panel pending';
+        panel.dataset.inputKey = inputKey || '';
+
+        var head = document.createElement('div');
+        head.className = 'clarification-head';
+        head.innerHTML = '<i class="fas fa-circle-question"></i><span>选择实现方向</span>';
+
+        var body = document.createElement('div');
+        body.className = 'clarification-body';
+        var question = document.createElement('div');
+        question.className = 'clarification-question';
+        question.textContent = request.question || '请选择一个方案，或补充自己的描述。';
+        body.appendChild(question);
+
+        var optionsWrap = document.createElement('div');
+        optionsWrap.className = 'clarification-options';
+        var options = request.options;
+        options.forEach(function (option) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'clarification-option';
+
+            var row = document.createElement('span');
+            row.className = 'clarification-option-row';
+            var label = document.createElement('span');
+            label.className = 'clarification-option-label';
+            label.textContent = option.label || '未命名方案';
+            row.appendChild(label);
+            if (option.recommended) {
+                var recommended = document.createElement('span');
+                recommended.className = 'clarification-recommended';
+                recommended.textContent = '推荐';
+                row.appendChild(recommended);
+            }
+            button.appendChild(row);
+            if (option.description) {
+                var description = document.createElement('span');
+                description.className = 'clarification-option-description';
+                description.textContent = option.description;
+                button.appendChild(description);
+            }
+            button.addEventListener('click', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                submitUserInput(panel, runId, inputKey, option.label || '', button);
+            });
+            optionsWrap.appendChild(button);
+        });
+        body.appendChild(optionsWrap);
+
+        var custom = document.createElement('div');
+        custom.className = 'clarification-custom';
+        var input = document.createElement('textarea');
+        input.className = 'clarification-custom-input';
+        input.rows = 2;
+        input.maxLength = 4000;
+        input.placeholder = '输入你自己的具体描述';
+        input.setAttribute('aria-label', '自定义需求描述');
+        input.addEventListener('input', function () {
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+        });
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                submitUserInput(panel, runId, inputKey, input.value);
+            }
+        });
+        var submit = document.createElement('button');
+        submit.type = 'button';
+        submit.className = 'clarification-submit';
+        submit.innerHTML = '<i class="fas fa-paper-plane"></i><span>提交</span>';
+        submit.onclick = function () { submitUserInput(panel, runId, inputKey, input.value); };
+        custom.appendChild(input);
+        custom.appendChild(submit);
+        body.appendChild(custom);
+
+        panel.appendChild(head);
+        panel.appendChild(body);
+        // 澄清问题必须位于已有回复之后，避免被长内容顶出当前视野。
+        host.appendChild(panel);
+        scrollToBottom(true);
+    }
+
+    function normalizeClarificationRequest(request) {
+        if (typeof request === 'string') {
+            try { request = JSON.parse(request); } catch (e) { request = { question: request }; }
+        }
+        request = request && typeof request === 'object' ? request : {};
+        if (request.request && typeof request.request === 'object') request = request.request;
+        if (request.details && typeof request.details === 'object') request = request.details;
+
+        var source = Array.isArray(request.options) ? request.options :
+            (Array.isArray(request.choices) ? request.choices : []);
+        if (!source.length) {
+            for (var i = 1; i <= 3; i++) {
+                var label = request['option' + i];
+                if (!label) continue;
+                source.push({
+                    label: label,
+                    description: request['option' + i + 'Description'] || '',
+                    recommended: i === 1
+                });
+            }
+        }
+
+        var options = source.slice(0, 3).map(function (option, index) {
+            if (typeof option === 'string') option = { label: option };
+            option = option && typeof option === 'object' ? option : {};
+            return {
+                label: String(option.label || option.title || option.name || option.value || option.text || '').trim(),
+                description: String(option.description || option.detail || option.help || '').trim(),
+                recommended: option.recommended === true || option.isRecommended === true || option.preferred === true,
+                index: index
+            };
+        }).filter(function (option) { return option.label; });
+        if (options.length && !options.some(function (option) { return option.recommended; })) {
+            options[0].recommended = true;
+        }
+        return {
+            question: String(request.question || request.prompt || request.title || '').trim(),
+            options: options
+        };
+    }
+
+    function submitUserInput(panel, runId, inputKey, answer, selectedButton) {
+        if (!panel || !panel.classList.contains('pending') || panel.classList.contains('submitting')) return;
+        var normalized = String(answer || '').trim();
+        if (!normalized) {
+            addAgentLog('还需要内容', '请选择方案或输入自己的描述', 'info');
+            var input = panel.querySelector('.clarification-custom-input');
+            if (input) input.focus();
+            return;
+        }
+        panel.classList.add('submitting');
+        if (selectedButton) selectedButton.classList.add('selected');
+        var head = panel.querySelector('.clarification-head');
+        if (head) head.innerHTML = '<i class="fas fa-spinner spinner"></i><span>正在提交选择</span>';
+        setUserInputPanelDisabled(panel, true);
+        fetchJson('/user-input', {
+            method: 'POST',
+            body: JSON.stringify({ runId: runId, key: inputKey, answer: normalized })
+        }).then(function () {
+            // 后端确认收到答案后立即移除面板，后续流式内容不会被它挡住。
+            panel.remove();
+            updateActiveResponseStatus('继续处理', '已收到你的选择');
+            setResponseState(activeResponseMessage, 'running', '处理中');
+            scrollToBottom(true);
+            addAgentLog('已提交选择', normalized, 'success');
+        }).catch(function (err) {
+            panel.classList.remove('submitting');
+            panel.querySelectorAll('.clarification-option.selected').forEach(function (button) {
+                button.classList.remove('selected');
+            });
+            if (head) head.innerHTML = '<i class="fas fa-circle-question"></i><span>选择实现方向</span>';
+            setUserInputPanelDisabled(panel, false);
+            addAgentLog('提交失败', err.message, 'error');
+        });
+    }
+
+    function setUserInputPanelDisabled(panel, disabled) {
+        panel.querySelectorAll('button, textarea').forEach(function (element) {
+            element.disabled = disabled;
+        });
+    }
+
+    function settlePendingUserInputPanels() {
+        document.querySelectorAll('.clarification-panel.pending').forEach(function (panel) {
+            panel.remove();
+        });
+    }
+
     function addAgentLog(title, detail, type) {
         var stack = document.getElementById('toastStack');
         if (!stack) return;
@@ -2632,13 +3066,23 @@
         window.setTimeout(function () { toast.remove(); }, type === 'error' ? 6500 : 3200);
     }
 
-    function renderTaskState(task) {
-        var panel = document.getElementById('taskPanel');
+    function renderTaskState(task, targetMessage) {
+        var globalPanel = document.getElementById('taskPanel');
+        var responseMessage = targetMessage || activeResponseMessage;
+        var panel = responseMessage ? responseMessage.querySelector('.response-task-panel') : globalPanel;
         if (!panel) return;
         if (!task) {
             panel.classList.remove('show');
             panel.innerHTML = '';
+            if (globalPanel && panel !== globalPanel) {
+                globalPanel.classList.remove('show');
+                globalPanel.innerHTML = '';
+            }
             return;
+        }
+        if (globalPanel && panel !== globalPanel) {
+            globalPanel.classList.remove('show');
+            globalPanel.innerHTML = '';
         }
         panel.classList.add('show');
         panel.innerHTML = '';
@@ -2669,6 +3113,11 @@
                 title: task.phase === 'COMPLETE' ? '完成分析与回复' : '分析需求并生成回复',
                 status: simpleStatus
             }];
+        }
+        if (taskSteps.length <= 1 && !task.hasWrites && task.phase !== 'BLOCKED') {
+            panel.classList.remove('show');
+            panel.innerHTML = '';
+            return;
         }
         taskSteps.forEach(function (step) {
             var item = document.createElement('span');
@@ -2745,6 +3194,7 @@
             renderWelcomeState('新会话已创建，当前项目上下文已就绪。');
             resetRuntimePanels();
             hideConfirmPanel();
+            settlePendingUserInputPanels();
             addAgentLog('新会话', '已创建', 'success');
             currentSessionId = '';
             currentRunId = '';
@@ -3339,7 +3789,7 @@
     }
 
     function renderMarkdown(text) {
-        text = text == null ? '' : String(text);
+        text = normalizeMessageContent(text);
         if (window.marked && window.DOMPurify) {
             var html = marked.parse(text);
             var clean = DOMPurify.sanitize(html, { ADD_ATTR: ['target', 'rel'] });
@@ -3354,6 +3804,48 @@
             return wrap.innerHTML;
         }
         return '<p>' + escapeHtml(text).replace(/\n/g, '<br>') + '</p>';
+    }
+
+    function normalizeMessageContent(content) {
+        if (content == null) return '';
+        if (Array.isArray(content)) {
+            return content.map(function (block) {
+                if (block == null) return '';
+                if (typeof block === 'string') return block;
+                if (typeof block !== 'object') return String(block);
+                if (block.type === 'text') return block.text || '';
+                if (block.type === 'tool_use') {
+                    return [
+                        '工具调用：' + (block.name || 'tool_call'),
+                        '```json',
+                        JSON.stringify(block.input || {}, null, 2),
+                        '```'
+                    ].join('\n');
+                }
+                if (block.type === 'tool_result') {
+                    return [
+                        '工具结果：' + (block.toolUseId || block.tool_use_id || ''),
+                        '```text',
+                        normalizeMessageContent(block.content || block.output || ''),
+                        '```'
+                    ].join('\n');
+                }
+                if (block.text) return block.text;
+                if (block.content) return normalizeMessageContent(block.content);
+                return '```json\n' + JSON.stringify(block, null, 2) + '\n```';
+            }).filter(function (part) {
+                return String(part || '').trim();
+            }).join('\n\n');
+        }
+        if (typeof content === 'object') {
+            if (content.text) return String(content.text);
+            if (content.content) return normalizeMessageContent(content.content);
+            return '```json\n' + JSON.stringify(content, null, 2) + '\n```';
+        }
+        return String(content)
+            .replace(/\r\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
     }
 
     function highlightCode(root) {

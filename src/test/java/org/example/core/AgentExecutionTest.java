@@ -11,9 +11,67 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Comparator;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 public class AgentExecutionTest extends TestCase {
+    public void testStreamingClarificationAnswerContinuesSameRun() throws Exception {
+        String originalHome = System.getProperty("user.home");
+        Path home = Files.createTempDirectory("fish-agent-clarify-home-");
+        Path workspace = Files.createTempDirectory("fish-agent-clarify-workspace-");
+        HttpServer server = null;
+        try {
+            System.setProperty("user.home", home.toString());
+            AtomicInteger requests = new AtomicInteger();
+            AtomicReference<String> continuedRequest = new AtomicReference<>();
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/chat", exchange -> {
+                int requestNumber = requests.incrementAndGet();
+                String requestBody = readUtf8(exchange.getRequestBody());
+                if (requestNumber == 1) {
+                    JsonObject arguments = new JsonObject();
+                    arguments.addProperty("question", "需要实现哪个范围？");
+                    arguments.addProperty("option1", "完整实现");
+                    arguments.addProperty("option1Description", "覆盖全部交互和验证");
+                    arguments.addProperty("option2", "最小改动");
+                    writeStream(exchange, toolCallChunk("clarify-1", "request_user_input", arguments.toString()));
+                } else {
+                    continuedRequest.set(requestBody);
+                    writeStream(exchange, contentChunk("已按完整范围继续。"));
+                }
+            });
+            server.start();
+
+            TerminalStart agent = new TerminalStart(url(server), "key", "model", new SessionManager());
+            agent.setMode(AgentMode.AUTO);
+            agent.setWorkspaceDir(workspace.toString());
+            AgentRun run = new AgentRun("clarify-run", "范围模糊", "model",
+                    agent.getApiUrl(), "key", workspace.toString());
+            final JsonObject[] seenRequest = {null};
+            ChatResult result = agent.chatStream("帮我完善一下", new StreamCallback() {
+                @Override
+                public void onUserInputRequired(String runId, String inputKey, JsonObject request) {
+                    seenRequest[0] = request;
+                    assertEquals("clarify-run", runId);
+                    assertTrue(run.resolveUserInput(inputKey, "完整实现"));
+                }
+            }, run);
+
+            assertEquals("已按完整范围继续。", result.getReply());
+            assertEquals(2, requests.get());
+            assertNotNull(seenRequest[0]);
+            assertEquals(2, seenRequest[0].getAsJsonArray("options").size());
+            assertNotNull(continuedRequest.get());
+            assertTrue(continuedRequest.get().contains("用户选择了方案：完整实现"));
+            assertEquals(TaskState.Phase.COMPLETE, run.getTaskState().getPhase());
+        } finally {
+            if (server != null) server.stop(0);
+            System.setProperty("user.home", originalHome);
+            deleteTree(workspace);
+            deleteTree(home);
+        }
+    }
+
     public void testMultiStepTaskCannotCompleteUntilVerificationPasses() throws Exception {
         String originalHome = System.getProperty("user.home");
         Path home = Files.createTempDirectory("fish-agent-home-");
@@ -311,6 +369,54 @@ public class AgentExecutionTest extends TestCase {
         JsonArray calls = new JsonArray();
         calls.add(call);
         return calls;
+    }
+
+    private static String toolCallChunk(String id, String name, String args) {
+        JsonObject function = new JsonObject();
+        function.addProperty("name", name);
+        function.addProperty("arguments", args);
+        JsonObject call = new JsonObject();
+        call.addProperty("index", 0);
+        call.addProperty("id", id);
+        call.add("function", function);
+        JsonArray calls = new JsonArray();
+        calls.add(call);
+        JsonObject delta = new JsonObject();
+        delta.add("tool_calls", calls);
+        return streamChunk(delta, "tool_calls");
+    }
+
+    private static String contentChunk(String content) {
+        JsonObject delta = new JsonObject();
+        delta.addProperty("content", content);
+        return streamChunk(delta, "stop");
+    }
+
+    private static String streamChunk(JsonObject delta, String finishReason) {
+        JsonObject choice = new JsonObject();
+        choice.add("delta", delta);
+        choice.addProperty("finish_reason", finishReason);
+        JsonArray choices = new JsonArray();
+        choices.add(choice);
+        JsonObject chunk = new JsonObject();
+        chunk.add("choices", choices);
+        return chunk.toString();
+    }
+
+    private static void writeStream(com.sun.net.httpserver.HttpExchange exchange, String chunk) throws IOException {
+        byte[] bytes = ("data: " + chunk + "\n\ndata: [DONE]\n\n").getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private static String readUtf8(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[1024];
+        int read;
+        while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+        return new String(output.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private static void deleteTree(Path root) throws IOException {

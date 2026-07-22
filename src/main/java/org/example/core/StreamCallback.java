@@ -16,6 +16,7 @@ public interface StreamCallback {
     default void onConfirmRequired(String runId, String confirmKey, String fnName, String fnArgs) {
         onConfirmRequired(confirmKey, fnName, fnArgs);
     }
+    default void onUserInputRequired(String runId, String inputKey, JsonObject request) {}
     default void onComplete(ChatResult result) {}
     default void onError(String error) {}
 }

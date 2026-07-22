@@ -18,9 +18,11 @@ public final class AgentRun {
     private final TaskState taskState;
     private final ChangeJournal changeJournal;
     private final ConcurrentHashMap<String, CompletableFuture<Boolean>> confirmations = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<String>> userInputRequests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ToolResult> executedToolCalls = new ConcurrentHashMap<>();
     private final Set<Process> activeProcesses = Collections.newSetFromMap(new ConcurrentHashMap<Process, Boolean>());
     private final AtomicInteger confirmationCounter = new AtomicInteger();
+    private final AtomicInteger userInputCounter = new AtomicInteger();
     private volatile boolean stopRequested;
     private volatile boolean approveAllRemaining;
     private volatile HttpURLConnection activeConnection;
@@ -94,12 +96,42 @@ public final class AgentRun {
     }
 
     public boolean resolveConfirmation(String key, boolean approved, boolean approveAll) {
-        if (approveAll && approved) approveAllRemaining = true;
-        CompletableFuture<Boolean> future = confirmations.remove(key);
+        // 等待方负责移除句柄。这里保留句柄，避免网页回答过快、先于 await 开始时丢失结果。
+        CompletableFuture<Boolean> future = confirmations.get(key);
         if (future == null) return false;
-        future.complete(approved);
+        boolean resolved = future.complete(approved);
+        if (resolved && approveAll && approved) approveAllRemaining = true;
         touch();
-        return true;
+        return resolved;
+    }
+
+    /** 为当前任务的一次澄清创建独立等待句柄，避免不同任务之间串答。 */
+    public String createUserInputRequest() {
+        String key = runId + "-input-" + userInputCounter.incrementAndGet();
+        userInputRequests.put(key, new CompletableFuture<String>());
+        touch();
+        return key;
+    }
+
+    public String awaitUserInput(String key, long timeout, TimeUnit unit) {
+        CompletableFuture<String> future = userInputRequests.get(key);
+        if (future == null) return null;
+        try {
+            return future.get(timeout, unit);
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            userInputRequests.remove(key);
+            touch();
+        }
+    }
+
+    public boolean resolveUserInput(String key, String answer) {
+        CompletableFuture<String> future = userInputRequests.get(key);
+        if (future == null) return false;
+        boolean resolved = future.complete(answer);
+        touch();
+        return resolved;
     }
 
     public void registerConnection(HttpURLConnection connection) {
@@ -130,7 +162,7 @@ public final class AgentRun {
         if (connection != null) connection.disconnect();
         for (Process process : new ArrayList<>(activeProcesses)) destroyProcessTree(process);
         for (CompletableFuture<Boolean> future : confirmations.values()) future.complete(false);
-        confirmations.clear();
+        for (CompletableFuture<String> future : userInputRequests.values()) future.complete(null);
         taskState.cancel();
         touch();
     }

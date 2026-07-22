@@ -16,6 +16,22 @@ import java.util.stream.Stream;
 
 public class AgentToolTest extends TestCase {
 
+    public void testUserInputRequestBuildsTwoOrThreeDistinctOptions() {
+        JsonObject args = new JsonObject();
+        args.addProperty("question", "需要实现哪个范围？");
+        args.addProperty("option1", "完整实现");
+        args.addProperty("option1Description", "覆盖全部入口和验证");
+        args.addProperty("option2", "最小改动");
+        ToolResult result = new RequestUserInputTool().executeDetailed(args);
+        assertFalse(result.getDetails().has("error"));
+        assertEquals(2, result.getDetails().getAsJsonArray("options").size());
+        assertTrue(result.getDetails().getAsJsonArray("options").get(0).getAsJsonObject()
+                .get("recommended").getAsBoolean());
+
+        args.addProperty("option2", "完整实现");
+        assertTrue(new RequestUserInputTool().executeDetailed(args).getDetails().has("error"));
+    }
+
     public void testReadOnlyCommandClassification() {
         assertTrue(RunCommandTool.isReadOnlyCommand("git status --short"));
         assertTrue(RunCommandTool.isReadOnlyCommand("rg -n TODO src"));

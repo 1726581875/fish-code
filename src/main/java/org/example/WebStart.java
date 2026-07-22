@@ -119,6 +119,7 @@ public class WebStart {
             server.createContext("/cwd/list", new CwdListHandler());
             server.createContext("/project/tree", new ProjectTreeHandler());
             server.createContext("/confirm", new ConfirmHandler());
+            server.createContext("/user-input", new UserInputHandler());
             server.createContext("/cancel", new CancelHandler());
             server.createContext("/rollback", new RollbackHandler());
             server.createContext("/config", new ConfigHandler());
@@ -639,6 +640,16 @@ public class WebStart {
                         evt.addProperty("runId", runId);
                         evt.addProperty("name", fnName);
                         evt.addProperty("args", fnArgs);
+                        if (!writeSse(os, evt)) run.requestStop();
+                    }
+
+                    @Override
+                    public void onUserInputRequired(String runId, String inputKey, JsonObject request) {
+                        JsonObject evt = new JsonObject();
+                        evt.addProperty("type", "user_input_required");
+                        evt.addProperty("inputKey", inputKey);
+                        evt.addProperty("runId", runId);
+                        evt.add("request", request == null ? new JsonObject() : request);
                         if (!writeSse(os, evt)) run.requestStop();
                     }
 
@@ -1241,6 +1252,54 @@ public class WebStart {
             JsonObject result = new JsonObject();
             result.addProperty("ok", resolved);
             sendJson(exchange, result, 200);
+        }
+    }
+
+    static class UserInputHandler implements HttpHandler {
+        private static final int MAX_ANSWER_CHARS = 4000;
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                handleOptions(exchange);
+                return;
+            }
+            if (!checkAuth(exchange)) {
+                sendJson(exchange, GSON.fromJson("{\"error\":\"unauthorized\"}", JsonObject.class), 401);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                exchange.close();
+                return;
+            }
+            try {
+                JsonObject req = GSON.fromJson(readBody(exchange), JsonObject.class);
+                String runId = req != null && req.has("runId") ? req.get("runId").getAsString() : "";
+                String key = req != null && req.has("key") ? req.get("key").getAsString() : "";
+                String answer = req != null && req.has("answer") ? req.get("answer").getAsString().trim() : "";
+                if (runId.isEmpty() || key.isEmpty()) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"runId和key不能为空\"}", JsonObject.class), 400);
+                    return;
+                }
+                if (answer.isEmpty()) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"请选择方案或输入自己的描述\"}", JsonObject.class), 400);
+                    return;
+                }
+                if (answer.length() > MAX_ANSWER_CHARS) {
+                    sendJson(exchange, GSON.fromJson("{\"error\":\"描述不能超过4000个字符\"}", JsonObject.class), 400);
+                    return;
+                }
+                boolean resolved = runRegistry.submitUserInput(runId, key, answer);
+                JsonObject result = new JsonObject();
+                result.addProperty("ok", resolved);
+                if (!resolved) result.addProperty("error", "这个问题已回答、已超时或任务已结束");
+                sendJson(exchange, result, resolved ? 200 : 409);
+            } catch (RuntimeException e) {
+                JsonObject error = new JsonObject();
+                error.addProperty("error", "回答格式无效");
+                sendJson(exchange, error, 400);
+            }
         }
     }
 
